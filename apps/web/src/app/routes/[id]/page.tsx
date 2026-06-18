@@ -448,10 +448,10 @@ function WeatherCard({
       ) : (
         <p className="text-sm text-slate-500">Weather data unavailable</p>
       )}
-      {taf?.raw && (
+      {typeof taf?.raw === "string" && taf.raw.length > 0 && (
         <div className="mt-4">
           <p className="text-xs text-slate-400 mb-1">TAF</p>
-          <p className="font-mono text-xs bg-slate-800 rounded p-2">{String(taf.raw)}</p>
+          <p className="font-mono text-xs bg-slate-800 rounded p-2">{taf.raw}</p>
         </div>
       )}
     </div>
@@ -483,9 +483,9 @@ function CheckpointCard({
       <p className="font-mono text-accent">{checkpoint.icao}</p>
       <p className="text-sm text-slate-400 truncate">{checkpoint.name}</p>
       <p className={`mt-2 text-sm font-semibold ${categoryColor}`}>{category}</p>
-      {checkpoint.metar?.raw && (
+      {typeof checkpoint.metar?.raw === "string" && checkpoint.metar.raw.length > 0 && (
         <p className="mt-2 font-mono text-xs text-slate-500 line-clamp-2">
-          {String(checkpoint.metar.raw)}
+          {checkpoint.metar.raw}
         </p>
       )}
     </div>
