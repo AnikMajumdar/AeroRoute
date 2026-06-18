@@ -8,12 +8,13 @@ import { Card } from "@/components/ui/Card";
 import { api, formatDuration } from "@/lib/api";
 
 export default async function SavedRoutesPage() {
-  const { userId } = await auth();
+  const { userId, getToken } = await auth();
   if (!userId) redirect("/");
 
+  const token = await getToken();
   let routes: Awaited<ReturnType<typeof api.listRoutes>> = [];
   try {
-    routes = await api.listRoutes(userId);
+    routes = await api.listRoutes(userId, token);
   } catch {
     // API unavailable
   }

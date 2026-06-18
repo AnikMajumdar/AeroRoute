@@ -29,7 +29,7 @@ const DEMO_ROUTE = {
 };
 
 export default function NewRoutePage() {
-  const { userId, isLoaded } = useAuth();
+  const { userId, isLoaded, getToken } = useAuth();
   const router = useRouter();
 
   const [departure, setDeparture] = useState<Airport | null>(null);
@@ -129,6 +129,7 @@ export default function NewRoutePage() {
     setError("");
 
     try {
+      const token = await getToken();
       const result = await api.calculateRoute(
         {
           departure_airport_id: departure.id,
@@ -138,7 +139,8 @@ export default function NewRoutePage() {
           fuel_price_usd_per_gal: parseFloat(fuelPrice),
           route_preference: routePreference,
         },
-        userId
+        userId,
+        token
       );
       router.push(`/routes/${result.id}`);
     } catch (err) {

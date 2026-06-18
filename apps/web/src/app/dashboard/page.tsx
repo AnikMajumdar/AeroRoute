@@ -9,12 +9,13 @@ import { StatCard } from "@/components/ui/StatCard";
 import { api, formatDuration } from "@/lib/api";
 
 export default async function DashboardPage() {
-  const { userId } = await auth();
+  const { userId, getToken } = await auth();
   if (!userId) redirect("/");
 
+  const token = await getToken();
   let routes: Awaited<ReturnType<typeof api.listRoutes>> = [];
   try {
-    routes = await api.listRoutes(userId);
+    routes = await api.listRoutes(userId, token);
   } catch {
     // API may be unavailable
   }

@@ -19,6 +19,10 @@ async function proxyRequest(request: NextRequest, pathSegments: string[]): Promi
   if (userId) {
     headers.set("X-User-Id", userId);
   }
+  const authorization = request.headers.get("authorization");
+  if (authorization) {
+    headers.set("Authorization", authorization);
+  }
 
   const init: RequestInit = {
     method: request.method,

@@ -173,27 +173,36 @@ export interface CopilotStatus {
 
 const IS_E2E = process.env.E2E_TEST_MODE === "true" || process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true";
 
-async function getRouteMaybeMock(id: string, userId: string): Promise<RouteResult> {
+async function getRouteMaybeMock(
+  id: string,
+  userId: string,
+  token?: string | null
+): Promise<RouteResult> {
   if (IS_E2E) {
     const { E2E_ROUTE_ID, mockRouteResult } = await import("@/lib/e2eMockRoute");
     if (id === E2E_ROUTE_ID) {
       return mockRouteResult;
     }
   }
-  return apiFetch<RouteResult>(`/routes/${id}`, { userId });
+  return apiFetch<RouteResult>(`/routes/${id}`, { userId, token });
 }
+
+type ApiAuth = { userId?: string; token?: string | null };
 
 async function apiFetch<T>(
   path: string,
-  options: RequestInit & { userId?: string } = {}
+  options: RequestInit & ApiAuth = {}
 ): Promise<T> {
-  const { userId, ...fetchOptions } = options;
+  const { userId, token, ...fetchOptions } = options;
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(fetchOptions.headers as Record<string, string>),
   };
   if (userId) {
     headers["X-User-Id"] = userId;
+  }
+  if (token) {
+    headers.Authorization = `Bearer ${token}`;
   }
 
   let response: Response;
@@ -242,40 +251,47 @@ export const api = {
       fuel_price_usd_per_gal: number;
       route_preference?: RoutePreference;
     },
-    userId: string
+    userId: string,
+    token?: string | null
   ) =>
     apiFetch<RouteResult>("/routes/calculate", {
       method: "POST",
       body: JSON.stringify(data),
       userId,
+      token,
     }),
 
-  getRoute: (id: string, userId: string) => getRouteMaybeMock(id, userId),
+  getRoute: (id: string, userId: string, token?: string | null) =>
+    getRouteMaybeMock(id, userId, token),
 
-  refreshLiveData: (routeId: string, userId: string) =>
+  refreshLiveData: (routeId: string, userId: string, token?: string | null) =>
     apiFetch<{ live_data_snapshot: Record<string, unknown> }>(`/routes/${routeId}/live-data/refresh`, {
       method: "POST",
       userId,
+      token,
     }),
 
-  listRoutes: (userId: string) => apiFetch<RouteListItem[]>("/routes", { userId }),
+  listRoutes: (userId: string, token?: string | null) =>
+    apiFetch<RouteListItem[]>("/routes", { userId, token }),
 
   getCopilotStatus: () => apiFetch<CopilotStatus>("/copilot/status"),
 
-  getCopilotSuggestions: (routeId: string, userId: string) =>
-    apiFetch<CopilotStatus>(`/routes/${routeId}/copilot/suggestions`, { userId }),
+  getCopilotSuggestions: (routeId: string, userId: string, token?: string | null) =>
+    apiFetch<CopilotStatus>(`/routes/${routeId}/copilot/suggestions`, { userId, token }),
 
-  copilotChat: (routeId: string, question: string, userId: string) =>
+  copilotChat: (routeId: string, question: string, userId: string, token?: string | null) =>
     apiFetch<CopilotChatResponse>(`/routes/${routeId}/copilot/chat`, {
       method: "POST",
       body: JSON.stringify({ question }),
       userId,
+      token,
     }),
 
-  draftBrief: (routeId: string, userId: string) =>
+  draftBrief: (routeId: string, userId: string, token?: string | null) =>
     apiFetch<{ content: Record<string, unknown> }>(`/routes/${routeId}/brief/draft`, {
       method: "POST",
       userId,
+      token,
     }),
 };
 

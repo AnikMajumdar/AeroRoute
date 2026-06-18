@@ -24,16 +24,17 @@ export default async function RouteResultPage({
 }: {
   params: Promise<{ id: string }>;
 }) {
-  const { userId } = await auth();
+  const { userId, getToken } = await auth();
   const e2eUserId = process.env.E2E_TEST_MODE === "true" ? "e2e-test-user" : null;
   if (!userId && !e2eUserId) redirect("/");
 
   const activeUserId = userId || e2eUserId!;
+  const token = userId ? await getToken() : null;
   const { id } = await params;
 
   let route: Awaited<ReturnType<typeof api.getRoute>>;
   try {
-    route = await api.getRoute(id, activeUserId);
+    route = await api.getRoute(id, activeUserId, token);
   } catch {
     if (process.env.E2E_TEST_MODE === "true" && id === E2E_ROUTE_ID) {
       const { mockRouteResult } = await import("@/lib/e2eMockRoute");

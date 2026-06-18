@@ -20,7 +20,7 @@ interface RouteCopilotProps {
 }
 
 export function RouteCopilot({ routeId }: RouteCopilotProps) {
-  const { userId } = useAuth();
+  const { userId, getToken } = useAuth();
   const e2eUserId =
     process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true" ? "e2e-test-user" : null;
   const activeUserId = userId || e2eUserId;
@@ -40,16 +40,19 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
     }).catch(() => setEnabled(false));
 
     if (activeUserId) {
-      api
-        .getCopilotSuggestions(routeId, activeUserId)
-        .then((s) => {
+      void (async () => {
+        try {
+          const token = await getToken();
+          const s = await api.getCopilotSuggestions(routeId, activeUserId, token);
           if (s.suggested_questions?.length) {
             setSuggestedQuestions(s.suggested_questions);
           }
-        })
-        .catch(() => {});
+        } catch {
+          // ignore
+        }
+      })();
     }
-  }, [routeId, activeUserId]);
+  }, [routeId, activeUserId, getToken]);
 
   const ask = useCallback(
     async (q: string) => {
@@ -58,7 +61,8 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
       setError("");
       setResponse(null);
       try {
-        const result = await api.copilotChat(routeId, q.trim(), activeUserId);
+        const token = await getToken();
+        const result = await api.copilotChat(routeId, q.trim(), activeUserId, token);
         setResponse(result);
         setQuestion("");
       } catch (err) {
@@ -67,7 +71,7 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
         setLoading(false);
       }
     },
-    [activeUserId, routeId]
+    [activeUserId, routeId, getToken]
   );
 
   return (
