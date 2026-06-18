@@ -1,0 +1,75 @@
+{
+  "model_name": "delay_risk_classifier_v1",
+  "model_version": "v1",
+  "feature_columns": [
+    "departure_hour_local",
+    "departure_day_of_week",
+    "departure_month",
+    "route_distance_nm",
+    "aircraft_cruise_speed_kt",
+    "cruise_altitude_ft",
+    "departure_flight_category_ord",
+    "destination_flight_category_ord",
+    "worst_enroute_flight_category_ord",
+    "number_of_ifr_checkpoints",
+    "number_of_lifr_checkpoints",
+    "avg_headwind_component_kt",
+    "max_headwind_component_kt",
+    "diversion_count",
+    "departure_delay_minutes",
+    "destination_delay_minutes",
+    "departure_closed",
+    "destination_closed",
+    "departure_ground_stop",
+    "destination_ground_stop",
+    "departure_faa_unknown",
+    "destination_faa_unknown",
+    "weather_score",
+    "delay_score"
+  ],
+  "accuracy": 1.0,
+  "macro_f1": 1.0,
+  "confusion_matrix": [
+    [
+      22,
+      0
+    ],
+    [
+      0,
+      1
+    ]
+  ],
+  "classes": [
+    "low",
+    "medium"
+  ],
+  "train_samples": 88,
+  "test_samples": 23,
+  "classification_report": {
+    "low": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 22.0
+    },
+    "medium": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 1.0
+    },
+    "accuracy": 1.0,
+    "macro avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 23.0
+    },
+    "weighted avg": {
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1-score": 1.0,
+      "support": 23.0
+    }
+  }
+}

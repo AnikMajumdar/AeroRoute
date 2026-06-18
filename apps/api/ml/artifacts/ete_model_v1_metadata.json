@@ -1,0 +1,25 @@
+{
+  "model_name": "ete_regressor_v1",
+  "model_version": "v1",
+  "feature_columns": [
+    "route_distance_nm",
+    "aircraft_cruise_speed_kt",
+    "cruise_altitude_ft",
+    "avg_headwind_component_kt",
+    "max_headwind_component_kt",
+    "avg_tailwind_component_kt",
+    "departure_hour_local",
+    "departure_month",
+    "weather_score",
+    "delay_score",
+    "number_of_segments",
+    "route_candidate_type_ord"
+  ],
+  "mae_minutes": 24.14,
+  "rmse_minutes": 34.9,
+  "mape_pct": 8.02,
+  "train_samples": 88,
+  "test_samples": 22,
+  "label_source": "deterministic_engine_v1",
+  "is_surrogate": true
+}
