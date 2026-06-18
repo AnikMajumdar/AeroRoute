@@ -1,4 +1,11 @@
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+/** Browser calls same-origin proxy to avoid CORS; server components call Modal directly. */
+function apiBaseUrl(): string {
+  if (typeof window !== "undefined") {
+    return "/api/backend";
+  }
+  const url = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  return url.replace(/\/$/, "");
+}
 
 function formatApiError(error: unknown): string {
   if (!error || typeof error !== "object") return "Request failed";
@@ -191,14 +198,16 @@ async function apiFetch<T>(
 
   let response: Response;
   try {
-    response = await fetch(`${API_URL}${path}`, {
+    response = await fetch(`${apiBaseUrl()}${path}`, {
       ...fetchOptions,
       headers,
     });
   } catch {
-    throw new Error(
-      `Cannot reach the API at ${API_URL}. Start it with: npm run dev (or npm run dev:api)`
-    );
+    const hint =
+      typeof window !== "undefined"
+        ? "Check that NEXT_PUBLIC_API_URL is set on Vercel and the Modal API is deployed."
+        : "Start the API with: npm run dev (or npm run dev:api)";
+    throw new Error(`Cannot reach the API. ${hint}`);
   }
 
   if (!response.ok) {
