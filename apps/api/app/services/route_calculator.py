@@ -13,6 +13,7 @@ from app.geo.utils import (
     intermediate_points,
 )
 from app.services.aviation_weather import aviation_weather_client
+from app.services.delay_risk import predict_delay_risk
 from app.services.diversion_postgis import find_diversion_airports_postgis
 from app.services.ml_features import extract_delay_features, extract_ete_features
 from app.services.faa_nas import faa_nas_client
@@ -199,7 +200,11 @@ class RouteCalculatorService:
         fuel_burn_gph = float(aircraft["fuel_burn_gph"])
         min_runway = int(aircraft.get("min_runway_ft") or 3000)
 
-        warnings: list[str] = []
+        warnings: list[str] = [
+            "Live weather and FAA data integrations are not connected. "
+            "Route scoring uses winds (Open-Meteo) and airport geometry only. "
+            "Verify METAR, TAF, TFRs, NOTAMs, and NAS status through official briefings."
+        ]
 
         dep_icao = departure.get("icao_code") or departure.get("ident")
         dest_icao = destination.get("icao_code") or destination.get("ident")
@@ -230,16 +235,6 @@ class RouteCalculatorService:
         )
         dep_status = dep_status or {}
         dest_status = dest_status or {}
-        if not dep_weather:
-            warnings.append(f"METAR unavailable for departure ({dep_icao})")
-        if not dest_weather:
-            warnings.append(f"METAR unavailable for destination ({dest_icao})")
-        warnings.extend(dep_status.get("warnings", []))
-        warnings.extend(dest_status.get("warnings", []))
-        if dep_status.get("status") == "unknown" or not dep_status.get("parse_success", True):
-            warnings.append(f"{dep_icao}: FAA delay status unknown — verify with official sources")
-        if dest_status.get("status") == "unknown" or not dest_status.get("parse_success", True):
-            warnings.append(f"{dest_icao}: FAA delay status unknown — verify with official sources")
 
         direct_dist = haversine_nm(dep_lat, dep_lon, dest_lat, dest_lon)
         climb_time = float(aircraft.get("climb_time_min") or 12)
@@ -339,6 +334,33 @@ class RouteCalculatorService:
         primary = variants[0]
         alternate = variants[1] if len(variants) > 1 else None
 
+        route_path = [{"lat": lat, "lon": lon} for lat, lon in primary.waypoints]
+        checkpoint_icaos = [c.get("icao") for c in checkpoint_weather if c.get("icao")]
+
+        from app.services.live_data.live_data_orchestrator import live_data_orchestrator
+        from app.services.live_data.live_data_scoring import (
+            apply_live_penalties_to_score_breakdown,
+            compute_live_penalties,
+            live_data_feature_flags,
+            live_data_warnings,
+        )
+
+        live_snapshot, provider_timings = await live_data_orchestrator.build_snapshot(
+            route_id=None,
+            departure_icao=dep_icao,
+            destination_icao=dest_icao,
+            route_path=route_path,
+            checkpoint_icaos=checkpoint_icaos,
+            supabase=supabase,
+        )
+        live_penalties = compute_live_penalties(live_snapshot)
+        warnings.extend(live_data_warnings(live_snapshot))
+        primary.score_breakdown = apply_live_penalties_to_score_breakdown(
+            primary.score_breakdown, live_penalties
+        )
+        primary.score = primary.score_breakdown.get("composite_score", primary.score)
+        live_flags = live_data_feature_flags(live_snapshot)
+
         candidate_summaries = [
             {
                 "name": v.name,
@@ -369,11 +391,15 @@ class RouteCalculatorService:
             "weather_checkpoints": checkpoint_weather,
             "route_candidates": candidate_summaries,
             "wind_data_quality": wind_quality,
+            "live_data_snapshot": live_snapshot.to_dict(),
         }
         delay_features = extract_delay_features(
             enriched_request, route_result_stub, primary.segments, diversion_airports
         )
+        delay_features.update(live_flags)
         ete_features = extract_ete_features(enriched_request, route_result_stub, primary.segments)
+        ete_features["weather_penalty"] = live_penalties.get("weather_penalty", 0)
+        ete_features["tfr_hazard_reroute_penalty"] = live_penalties.get("tfr_reroute_penalty", 0)
 
         try:
             from ml.inference.delay_risk_model import delay_risk_model
@@ -409,6 +435,8 @@ class RouteCalculatorService:
             "ete_features": ete_features,
             "route_preference": route_preference,
             "enriched_request": enriched_request,
+            "live_data_snapshot": live_snapshot.to_dict(),
+            "provider_timings": provider_timings,
         }
 
 

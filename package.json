@@ -1,0 +1,28 @@
+{
+  "name": "aeroroute",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/web"
+  ],
+  "scripts": {
+    "predev": "lsof -ti :8000 | xargs kill -9 2>/dev/null || true",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "dev:api": "cd apps/api && .venv/bin/python -m uvicorn app.main:app --reload --port 8000",
+    "dev": "concurrently \"npm run dev:web\" \"npm run dev:api\"",
+    "build:web": "npm run build --workspace=apps/web",
+    "test:api": "cd apps/api && .venv/bin/python -m pytest",
+    "test:web": "npm run test:e2e --workspace=apps/web",
+    "import:airports": "cd apps/api && .venv/bin/python -m scripts.import_airports",
+    "ml:generate": "cd apps/api && .venv/bin/python ../../scripts/generate_training_routes.py",
+    "ml:export-delay": "cd apps/api && .venv/bin/python ../../scripts/export_delay_dataset.py",
+    "ml:export-ete": "cd apps/api && .venv/bin/python ../../scripts/export_ete_dataset.py",
+    "ml:train-delay": "cd apps/api && .venv/bin/python ml/train_delay_model.py",
+    "ml:train-ete": "cd apps/api && .venv/bin/python ml/train_ete_model.py",
+    "deploy:api": "cd apps/api && .venv/bin/python -m modal deploy modal_app.py",
+    "setup:api": "cd apps/api && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  }
+}

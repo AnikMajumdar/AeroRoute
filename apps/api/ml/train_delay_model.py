@@ -15,8 +15,9 @@ from app.services.ml_features import DELAY_FEATURE_COLUMNS  # noqa: E402
 
 ARTIFACT_DIR = API_ROOT / "ml" / "artifacts"
 DEFAULT_DATA = Path(__file__).resolve().parents[3] / "data" / "ml" / "delay_risk_training_v1.parquet"
-MIN_SAMPLES = 30
+MIN_SAMPLES = 300
 MIN_CLASSES = 2
+MIN_PER_CLASS = 30
 
 
 def main() -> None:
@@ -53,6 +54,14 @@ def main() -> None:
             f"(have only: {list(class_counts.index)}).\n"
             f"Re-export after label update: npm run ml:export-delay\n"
             f"Or generate more varied routes: npm run ml:generate -- --max-samples 100 --delay 2"
+        )
+        sys.exit(1)
+
+    small_classes = class_counts[class_counts < MIN_PER_CLASS]
+    if len(small_classes) > 0:
+        print(
+            f"Each class needs at least {MIN_PER_CLASS} samples. Under-represented: {small_classes.to_dict()}\n"
+            f"Generate more routes: npm run ml:generate -- --max-samples 1000 --delay 1"
         )
         sys.exit(1)
 

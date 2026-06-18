@@ -18,7 +18,7 @@ CopilotIntent = Literal[
 INTENT_PATTERNS: list[tuple[CopilotIntent, re.Pattern[str]]] = [
     ("primary_vs_alternate", re.compile(r"\b(compare|alternate|vs|versus|difference|primary)\b", re.I)),
     ("wind", re.compile(r"\b(wind|headwind|tailwind|groundspeed|gfs)\b", re.I)),
-    ("weather", re.compile(r"\b(weather|metar|taf|vfr|ifr|mvfr|lifr|ceiling|visibility|cloud)\b", re.I)),
+    ("weather", re.compile(r"\b(weather|metar|taf|vfr|ifr|mvfr|lifr|ceiling|visibility|cloud|tfr|notam|sigmet|airmet|pirep|hazard|restriction)\b", re.I)),
     ("fuel", re.compile(r"\b(fuel|gallon|gal|reserve|burn|cost|price)\b", re.I)),
     ("diversion", re.compile(r"\b(diversion|alternate airport|divert|alt airport)\b", re.I)),
     ("delay", re.compile(r"\b(delay|ground stop|closure|closed|nas|faa status)\b", re.I)),
@@ -42,11 +42,11 @@ def classify_copilot_intent(question: str) -> CopilotIntent:
 
 INTENT_TOOLS: dict[CopilotIntent, list[str]] = {
     "route_explanation": ["get_route_score_explanation", "get_route_summary"],
-    "weather": ["get_weather_risk_summary", "refresh_route_weather"],
+    "weather": ["get_weather_risk_summary", "get_weather_hazard_summary", "get_tfr_summary", "get_notam_summary", "refresh_live_data"],
     "wind": ["get_segment_wind_summary"],
     "fuel": ["get_fuel_breakdown"],
     "diversion": ["get_diversion_recommendation"],
-    "delay": ["get_weather_risk_summary", "get_route_summary"],
+    "delay": ["get_prediction_summary", "get_weather_risk_summary", "get_live_data_summary"],
     "primary_vs_alternate": ["get_primary_vs_alternate_comparison"],
     "general_summary": ["get_route_summary", "get_route_score_explanation"],
     "unknown": ["get_route_summary"],
@@ -77,6 +77,13 @@ async def build_intent_context(
         "get_weather_risk_summary": copilot_tools.get_weather_risk_summary,
         "get_diversion_recommendation": copilot_tools.get_diversion_recommendation,
         "refresh_route_weather": copilot_tools.refresh_route_weather,
+        "get_live_data_summary": copilot_tools.get_live_data_summary,
+        "get_tfr_summary": copilot_tools.get_tfr_summary,
+        "get_notam_summary": copilot_tools.get_notam_summary,
+        "get_weather_hazard_summary": copilot_tools.get_weather_hazard_summary,
+        "get_prediction_summary": copilot_tools.get_prediction_summary,
+        "refresh_live_data": copilot_tools.refresh_live_data,
+        "recalculate_with_latest_data": copilot_tools.recalculate_with_latest_data,
     }
 
     for name in tool_names:

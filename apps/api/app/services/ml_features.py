@@ -229,6 +229,11 @@ def extract_ete_features(
         "delay_score": _score_component(score_breakdown, "delay"),
         "number_of_segments": len(segments or []),
         "wind_data_quality": route_result.get("wind_data_quality"),
+        "route_preference_ord": {"balanced": 0, "fastest": 1, "fuel_saver": 2, "weather_cautious": 3}.get(
+            route_request.get("route_preference", "balanced"), 0
+        ),
+        "weather_penalty": float(route_result.get("_weather_penalty") or 0),
+        "tfr_hazard_reroute_penalty": float(route_result.get("_tfr_hazard_reroute_penalty") or 0),
     }
 
 
@@ -259,7 +264,7 @@ def _composite_delay_risk_score(features: dict[str, Any]) -> float:
 
 
 def delay_label_from_features(features: dict[str, Any]) -> dict[str, Any]:
-    """low / medium / high delay risk from FAA, weather, and route composite signals."""
+    """low / medium / high delay risk from FAA, weather, live data, and route composite signals."""
     dep_delay = int(features.get("departure_delay_minutes") or 0)
     dest_delay = int(features.get("destination_delay_minutes") or 0)
     max_delay = max(dep_delay, dest_delay)
@@ -268,37 +273,80 @@ def delay_label_from_features(features: dict[str, Any]) -> dict[str, Any]:
     ground_stop = bool(features.get("departure_ground_stop")) or bool(features.get("destination_ground_stop"))
     dep_unknown = bool(features.get("departure_faa_unknown"))
     dest_unknown = bool(features.get("destination_faa_unknown"))
-    poor_weather = (
-        int(features.get("departure_flight_category_ord") or 0) in (2, 3)
-        or int(features.get("destination_flight_category_ord") or 0) in (2, 3)
-        or int(features.get("worst_enroute_flight_category_ord") or 0) in (2, 3)
+    lifr = (
+        int(features.get("departure_flight_category_ord") or 0) == 3
+        or int(features.get("destination_flight_category_ord") or 0) == 3
+        or int(features.get("worst_enroute_flight_category_ord") or 0) == 3
     )
+    ifr = (
+        int(features.get("departure_flight_category_ord") or 0) >= 2
+        or int(features.get("destination_flight_category_ord") or 0) >= 2
+        or int(features.get("worst_enroute_flight_category_ord") or 0) >= 2
+    )
+    tfr_intersects = bool(features.get("tfr_intersects_route"))
+    sigmet = bool(features.get("sigmet_intersects"))
+    airmet = bool(features.get("airmet_intersects"))
+    adverse_pireps = int(features.get("adverse_pirep_count") or 0)
+    notam_closure = bool(features.get("notam_airport_closure")) or bool(features.get("notam_runway_closure"))
     composite = _composite_delay_risk_score(features)
 
-    if closed or ground_stop or max_delay >= 30:
+    reasons: list[str] = []
+    if closed:
+        reasons.append("airport_closure_faa_nas")
+    if ground_stop:
+        reasons.append("ground_stop_faa_nas")
+    if max_delay >= 30:
+        reasons.append("faa_delay_ge_30")
+    if tfr_intersects:
+        reasons.append("tfr_intersects_route")
+    if sigmet:
+        reasons.append("sigmet_intersects_route")
+    if lifr:
+        reasons.append("lifr_dep_dest_or_checkpoint")
+    if notam_closure:
+        reasons.append("notam_closure")
+
+    if closed or ground_stop or max_delay >= 30 or tfr_intersects or sigmet or lifr or notam_closure:
         level = "high"
-        label_source = "rules_label_v1"
-    elif max_delay > 0 and max_delay < 30:
+        label_source = {"rules": "live_data_rules_v2", "reasons": reasons}
+    elif (max_delay > 0 and max_delay < 30) or ifr or airmet or adverse_pireps >= 2 or int(features.get("tfr_nearby_count") or 0) > 0:
         level = "medium"
-        label_source = "rules_label_v1"
-    elif (dep_unknown or dest_unknown) and poor_weather:
-        level = "medium"
-        label_source = "rules_label_v1"
+        if max_delay > 0:
+            reasons.append("faa_delay_lt_30")
+        if ifr:
+            reasons.append("ifr_dep_dest_or_checkpoint")
+        if airmet:
+            reasons.append("airmet_intersects")
+        if adverse_pireps >= 2:
+            reasons.append("multiple_adverse_pireps")
+        if int(features.get("tfr_nearby_count") or 0) > 0:
+            reasons.append("tfr_nearby")
+        label_source = {"rules": "live_data_rules_v2", "reasons": reasons}
     elif composite >= 50:
         level = "high"
-        label_source = "composite_proxy_v1"
-    elif composite >= 22:
+        label_source = {"rules": "composite_proxy_v1", "reasons": ["composite_score_ge_50"]}
+    elif composite >= 22 or adverse_pireps == 1:
         level = "medium"
-        label_source = "composite_proxy_v1"
+        label_source = {"rules": "composite_proxy_v1", "reasons": ["composite_score_ge_22" if composite >= 22 else "adverse_pirep"]}
     else:
         level = "low"
-        label_source = "composite_proxy_v1" if (dep_unknown or dest_unknown) else "rules_label_v1"
+        label_source = {"rules": "live_data_rules_v2" if not (dep_unknown or dest_unknown) else "composite_proxy_v1", "reasons": ["no_major_signals"]}
 
     return {
         "delay_risk": level,
         "label_source": label_source,
         "max_delay_minutes": max_delay,
         "composite_risk_score": composite,
+        "data_basis": [
+            s for s, ok in [
+                ("FAA NAS", not (dep_unknown and dest_unknown)),
+                ("METAR/TAF", bool(features.get("departure_flight_category"))),
+                ("TFR", tfr_intersects or int(features.get("tfr_nearby_count") or 0) > 0),
+                ("weather hazards", sigmet or airmet or adverse_pireps > 0),
+                ("NOTAM", bool(features.get("notam_connected"))),
+            ] if ok
+        ],
+        "confidence": features.get("live_data_confidence", "medium"),
     }
 
 

@@ -11,10 +11,10 @@ logger = logging.getLogger(__name__)
 
 SAFETY_LIMITATIONS = [
     "Educational tool only — not certified for operational flight planning.",
-    "Does not include NOTAMs, TFRs, or published airways/SID/STAR procedures.",
-    "Winds are GFS model estimates; METAR/TAF may be stale at chat time.",
+    "AviationWeather.gov and FAA live APIs are not connected in this deployment.",
+    "Winds use Open-Meteo GFS estimates; verify actual conditions before flight.",
     "ML ETE predictions use surrogate labels until real track data is available.",
-    "Verify all decisions with official briefings, POH, dispatch, and pilot judgment.",
+    "Never use AeroRoute estimates as operational approval or 'safe to fly' guidance.",
 ]
 
 
@@ -67,6 +67,28 @@ def _wind_summary(segments: list[dict[str, Any]], wind_quality: str | None) -> d
     }
 
 
+def _live_data_summary(snapshot: dict[str, Any] | None) -> dict[str, Any]:
+    if not snapshot:
+        return {"available": False, "note": "No live data snapshot stored for this route."}
+    from app.services.live_data.live_data_scoring import summarize_live_restrictions, summarize_weather_hazards
+
+    restrictions = summarize_live_restrictions(snapshot)
+    hazards = summarize_weather_hazards(snapshot)
+    return {
+        "available": True,
+        "fetched_at": snapshot.get("fetched_at"),
+        "confidence": snapshot.get("confidence", {}),
+        "tfr_intersecting": len(restrictions["intersecting"]),
+        "tfr_nearby": len(restrictions["nearby"]),
+        "tfr_unmapped": len(restrictions["unmapped"]),
+        "notam_connected": restrictions.get("notam_connected", False),
+        "notam_count": len(restrictions.get("notams") or []),
+        "hazard_count": len(hazards.get("hazards") or []),
+        "sigmet_count": len(hazards.get("sigmets") or []),
+        "pirep_count": len(hazards.get("pireps") or []),
+    }
+
+
 async def get_route_context(
     supabase: Any,
     route_id: str,
@@ -104,6 +126,17 @@ async def get_route_context(
     route_payload = {**route_data, "id": route_id}
     predictions = _load_predictions(supabase, route_id)
 
+    live_snap_row = (
+        supabase.table("live_data_snapshots")
+        .select("snapshot, fetched_at")
+        .eq("route_result_id", route_id)
+        .order("fetched_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    live_data_snapshot = live_snap_row.data[0]["snapshot"] if live_snap_row.data else None
+    live_fetched_at = live_snap_row.data[0].get("fetched_at") if live_snap_row.data else None
+
     dep_wx = route_data.get("departure_weather") or {}
     dest_wx = route_data.get("destination_weather") or {}
     dep_metar = dep_wx.get("metar") if isinstance(dep_wx, dict) else None
@@ -115,20 +148,8 @@ async def get_route_context(
 
     weather_refreshed_at = None
     if refresh_weather:
-        from app.services.aviation_weather import aviation_weather_client
-        from app.services.faa_nas import faa_nas_client
-
-        dep_icao = dep.get("icao_code") or dep.get("ident")
-        dest_icao = dest.get("icao_code") or dest.get("ident")
-        if dep_icao:
-            dep_metar = await aviation_weather_client.get_metar(dep_icao) or dep_metar
-            dep_taf = await aviation_weather_client.get_taf(dep_icao) or dep_taf
-            dep_status = await faa_nas_client.get_airport_status(dep_icao) or dep_status
-        if dest_icao:
-            dest_metar = await aviation_weather_client.get_metar(dest_icao) or dest_metar
-            dest_taf = await aviation_weather_client.get_taf(dest_icao) or dest_taf
-            dest_status = await faa_nas_client.get_airport_status(dest_icao) or dest_status
         weather_refreshed_at = datetime.now(timezone.utc).isoformat()
+        # Aviation weather integration disabled — no live METAR/TAF refresh.
 
     enriched_request = {
         **request_data,
@@ -142,6 +163,7 @@ async def get_route_context(
         "data_source_timestamps": {
             "route_calculated_at": route_data.get("created_at"),
             "weather_refreshed_at": weather_refreshed_at,
+            "live_data_fetched_at": live_fetched_at or (live_data_snapshot or {}).get("fetched_at"),
             "context_built_at": datetime.now(timezone.utc).isoformat(),
         },
         "limitations": SAFETY_LIMITATIONS,
@@ -197,6 +219,8 @@ async def get_route_context(
         "warnings": route_data.get("warnings") or [],
         "route_candidates": route_data.get("route_candidates") or [],
         "ml_predictions": predictions,
+        "live_data_snapshot": live_data_snapshot,
+        "live_data_summary": _live_data_summary(live_data_snapshot),
         "segments": {
             "primary": segment_snapshots(segments, "primary") if include_full_segments else [],
             "alternate": segment_snapshots(alternate_segments, "alternate") if include_full_segments else [],

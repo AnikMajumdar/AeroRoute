@@ -135,6 +135,8 @@ def _build_route_result_detail(
         destination_status=_faa_status_from_weather(calc_result.get("destination_weather")),
         delay_prediction=calc_result.get("delay_prediction"),
         ete_prediction=calc_result.get("ete_prediction"),
+        live_data_snapshot=calc_result.get("live_data_snapshot"),
+        performance={"provider_timings": calc_result.get("provider_timings")},
         segments=primary.segments,
         diversion_airports=diversion_details,
         departure_airport=AirportSummary(**row_to_airport(dep_result)),
@@ -418,6 +420,29 @@ async def calculate_route(
 
         result_id = result_row.data[0]["id"]
 
+        if calc_result.get("live_data_snapshot"):
+            try:
+                from app.services.live_data.live_data_orchestrator import live_data_orchestrator
+                from app.services.live_data.types import LiveDataSnapshot
+
+                snap_dict = calc_result["live_data_snapshot"]
+                snap_dict["route_id"] = result_id
+                snapshot = LiveDataSnapshot(
+                    route_id=result_id,
+                    fetched_at=snap_dict["fetched_at"],
+                    departure_icao=snap_dict.get("departure_icao"),
+                    destination_icao=snap_dict.get("destination_icao"),
+                    weather=snap_dict.get("weather", {}),
+                    restrictions=snap_dict.get("restrictions", {}),
+                    faa_status=snap_dict.get("faa_status", {}),
+                    confidence=snap_dict.get("confidence", {}),
+                    sources=snap_dict.get("sources", {}),
+                    warnings=snap_dict.get("warnings", []),
+                )
+                await live_data_orchestrator.persist_snapshot(supabase, result_id, user_id, snapshot)
+            except Exception as exc:
+                logger.debug("Live data snapshot persist skipped: %s", exc)
+
         for seg in primary.segments:
             supabase.table("route_segments").insert(
                 {"route_result_id": result_id, "route_variant": "primary", **seg}
@@ -452,6 +477,7 @@ async def calculate_route(
                 **result_row.data[0],
                 "normalized_score_breakdown": primary.score_breakdown,
                 "route_candidates": calc_result.get("candidate_summaries"),
+                "live_data_snapshot": calc_result.get("live_data_snapshot"),
             }
             log_training_samples(
                 supabase,
@@ -590,6 +616,18 @@ async def get_route(
     score_breakdown = result.data.get("normalized_score_breakdown") or result.data.get("score_breakdown")
     delay_prediction, ete_prediction = _load_ml_predictions(supabase, route_id)
 
+    live_snap = (
+        supabase.table("live_data_snapshots")
+        .select("snapshot")
+        .eq("route_result_id", route_id)
+        .order("fetched_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    live_data_snapshot = None
+    if live_snap.data:
+        live_data_snapshot = live_snap.data[0].get("snapshot")
+
     return RouteResultDetail(
         id=result.data["id"],
         route_request_id=result.data["route_request_id"],
@@ -627,7 +665,67 @@ async def get_route(
         destination_airport=AirportSummary(**row_to_airport(dest.data)),
         aircraft_profile=AircraftProfile(**aircraft.data),
         created_at=result.data["created_at"],
+        live_data_snapshot=live_data_snapshot,
     )
+
+
+def _load_live_snapshot(supabase: Any, route_id: str) -> dict[str, Any] | None:
+    row = (
+        supabase.table("live_data_snapshots")
+        .select("snapshot")
+        .eq("route_result_id", route_id)
+        .order("fetched_at", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if row.data:
+        return row.data[0].get("snapshot")
+    return None
+
+
+@router.post("/routes/{route_id}/live-data/refresh")
+async def refresh_live_data(
+    route_id: str,
+    user_id: str = Depends(get_current_user_id),
+) -> dict[str, Any]:
+    """Refresh live TFR, hazard, and NOTAM snapshot without full recalculation."""
+    supabase = get_supabase()
+    route_data, request_data, dep, dest, aircraft, segments, diversions = await _load_route_bundle(
+        supabase, route_id, user_id
+    )
+    dep_icao = dep.get("icao_code") or dep.get("ident")
+    dest_icao = dest.get("icao_code") or dest.get("ident")
+    path = route_data.get("primary_path") or []
+    route_path = [{"lat": p["lat"], "lon": p["lon"]} for p in path if "lat" in p and "lon" in p]
+
+    from app.services.live_data.live_data_orchestrator import live_data_orchestrator
+    from app.services.live_data.types import LiveDataSnapshot
+
+    snapshot, timings = await live_data_orchestrator.build_snapshot(
+        route_id=route_id,
+        departure_icao=dep_icao,
+        destination_icao=dest_icao,
+        route_path=route_path,
+        supabase=supabase,
+    )
+    snap = LiveDataSnapshot(
+        route_id=route_id,
+        fetched_at=snapshot.fetched_at,
+        departure_icao=snapshot.departure_icao,
+        destination_icao=snapshot.destination_icao,
+        weather=snapshot.weather,
+        restrictions=snapshot.restrictions,
+        faa_status=snapshot.faa_status,
+        confidence=snapshot.confidence,
+        sources=snapshot.sources,
+        warnings=snapshot.warnings,
+    )
+    await live_data_orchestrator.persist_snapshot(supabase, route_id, user_id, snap)
+    return {
+        "live_data_snapshot": snapshot.to_dict(),
+        "provider_timings": timings,
+        "disclaimer": snapshot.to_dict()["disclaimer"],
+    }
 
 
 @router.get("/copilot/status", response_model=CopilotStatusResponse)

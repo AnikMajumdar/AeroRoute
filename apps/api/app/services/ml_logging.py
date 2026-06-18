@@ -32,6 +32,11 @@ def log_training_samples(
     }
     delay_features = extract_delay_features(enriched_request, route_result, segments, diversions)
     ete_features = extract_ete_features(enriched_request, route_result, segments)
+    live_snap = route_result.get("live_data_snapshot")
+    if live_snap:
+        from app.services.live_data.live_data_scoring import live_data_feature_flags
+
+        delay_features.update(live_data_feature_flags(live_snap))
     delay_label = delay_label_from_features(delay_features)
     ete_label = ete_label_from_route(route_result)
 

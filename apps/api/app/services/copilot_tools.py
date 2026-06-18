@@ -117,3 +117,134 @@ async def refresh_route_weather(supabase: Any, route_id: str, user_id: str) -> d
         "weather_checkpoints": ctx["weather_checkpoints"],
         "note": "Checkpoint METARs are from route calculation time unless recalculated.",
     }
+
+
+async def get_live_data_summary(supabase: Any, route_id: str, user_id: str) -> dict[str, Any]:
+    ctx = await get_route_context(supabase, route_id, user_id)
+    return {
+        "source": "live_data_orchestrator",
+        "timestamp": ctx["data_source_timestamps"],
+        "live_data_summary": ctx.get("live_data_summary"),
+        "live_data_snapshot": ctx.get("live_data_snapshot"),
+        "confidence": (ctx.get("live_data_snapshot") or {}).get("confidence"),
+        "warnings": ctx["warnings"],
+    }
+
+
+async def get_tfr_summary(supabase: Any, route_id: str, user_id: str) -> dict[str, Any]:
+    ctx = await get_route_context(supabase, route_id, user_id)
+    snap = ctx.get("live_data_snapshot") or {}
+    from app.services.live_data.live_data_scoring import summarize_live_restrictions
+
+    restrictions = summarize_live_restrictions(snap)
+    return {
+        "source": "FAA TFR (tfr.faa.gov)",
+        "timestamp": ctx["data_source_timestamps"],
+        "fetched_at": snap.get("fetched_at"),
+        "intersecting": restrictions["intersecting"],
+        "nearby": restrictions["nearby"],
+        "unmapped": restrictions["unmapped"],
+        "disclaimer": "Advisory only — verify TFRs through official FAA briefings.",
+    }
+
+
+async def get_notam_summary(supabase: Any, route_id: str, user_id: str) -> dict[str, Any]:
+    ctx = await get_route_context(supabase, route_id, user_id)
+    snap = ctx.get("live_data_snapshot") or {}
+    connected = (snap.get("restrictions") or {}).get("notam_connected", False)
+    notams = (snap.get("restrictions") or {}).get("notams") or []
+    return {
+        "source": "NOTAM provider",
+        "timestamp": ctx["data_source_timestamps"],
+        "notam_connected": connected,
+        "notams": notams,
+        "message": (
+            None
+            if connected
+            else "NOTAM integration not connected. Verify NOTAMs through official sources."
+        ),
+    }
+
+
+async def get_weather_hazard_summary(supabase: Any, route_id: str, user_id: str) -> dict[str, Any]:
+    ctx = await get_route_context(supabase, route_id, user_id)
+    snap = ctx.get("live_data_snapshot") or {}
+    from app.services.live_data.live_data_scoring import summarize_weather_hazards
+
+    hazards = summarize_weather_hazards(snap)
+    return {
+        "source": "AviationWeather.gov",
+        "timestamp": ctx["data_source_timestamps"],
+        "fetched_at": snap.get("fetched_at"),
+        **hazards,
+    }
+
+
+async def get_prediction_summary(supabase: Any, route_id: str, user_id: str) -> dict[str, Any]:
+    ctx = await get_route_context(supabase, route_id, user_id)
+    preds = ctx.get("ml_predictions") or {}
+    delay = (preds.get("delay_risk") or {}).get("prediction") or {}
+    ete = (preds.get("ete_prediction") or {}).get("prediction") or {}
+    return {
+        "source": "ml_inference + rules_baseline",
+        "timestamp": ctx["data_source_timestamps"],
+        "delay_prediction": delay,
+        "ete_prediction": ete,
+        "note": "AeroRoute estimates only — not operational delay or ETE guarantees.",
+    }
+
+
+async def refresh_live_data(supabase: Any, route_id: str, user_id: str) -> dict[str, Any]:
+    from app.services.live_data.live_data_orchestrator import live_data_orchestrator
+    from app.services.route_loader import load_route_bundle
+
+    route_data, request_data, dep, dest, aircraft, segments, diversions, _ = await load_route_bundle(
+        supabase, route_id, user_id
+    )
+    dep_icao = dep.get("icao_code") or dep.get("ident")
+    dest_icao = dest.get("icao_code") or dest.get("ident")
+    path = route_data.get("primary_path") or []
+    route_path = [{"lat": p["lat"], "lon": p["lon"]} for p in path if "lat" in p and "lon" in p]
+    snapshot, timings = await live_data_orchestrator.build_snapshot(
+        route_id=route_id,
+        departure_icao=dep_icao,
+        destination_icao=dest_icao,
+        route_path=route_path,
+        supabase=supabase,
+    )
+    from app.services.live_data.types import LiveDataSnapshot
+
+    await live_data_orchestrator.persist_snapshot(
+        supabase,
+        route_id,
+        user_id,
+        LiveDataSnapshot(
+            route_id=route_id,
+            fetched_at=snapshot.fetched_at,
+            departure_icao=snapshot.departure_icao,
+            destination_icao=snapshot.destination_icao,
+            weather=snapshot.weather,
+            restrictions=snapshot.restrictions,
+            faa_status=snapshot.faa_status,
+            confidence=snapshot.confidence,
+            sources=snapshot.sources,
+            warnings=snapshot.warnings,
+        ),
+    )
+    return {
+        "source": "live_data_orchestrator (refresh)",
+        "timestamp": {"live_data_fetched_at": snapshot.fetched_at},
+        "live_data_snapshot": snapshot.to_dict(),
+        "provider_timings": timings,
+    }
+
+
+async def recalculate_with_latest_data(supabase: Any, route_id: str, user_id: str) -> dict[str, Any]:
+    return {
+        "source": "route_calculator",
+        "message": (
+            "Full recalculation requires a new POST /routes/calculate request with the same airports. "
+            "Use refresh_live_data to update TFR/hazard/NOTAM snapshot without recomputing winds."
+        ),
+        "refresh": await refresh_live_data(supabase, route_id, user_id),
+    }

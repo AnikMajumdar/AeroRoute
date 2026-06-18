@@ -1,0 +1,127 @@
+import type { RouteResult } from "@/lib/api";
+
+/** Fixture for Playwright E2E — mirrors API RouteResultDetail shape */
+export const E2E_ROUTE_ID = "e2e-route-fixture-001";
+export const E2E_USER_ID = "e2e-test-user";
+
+export const mockRouteResult: RouteResult = {
+  id: E2E_ROUTE_ID,
+  route_request_id: "e2e-request-001",
+  status: "completed",
+  primary_distance_nm: 2145.2,
+  primary_ete_minutes: 702.5,
+  primary_fuel_burn_gal: 198.4,
+  primary_fuel_cost_usd: 1289.6,
+  primary_score: 82,
+  primary_path: [
+    { lat: 40.6398, lon: -73.7789 },
+    { lat: 33.9425, lon: -118.4081 },
+  ],
+  alternate_distance_nm: 2182.0,
+  alternate_ete_minutes: 718.0,
+  alternate_fuel_burn_gal: 205.1,
+  alternate_fuel_cost_usd: 1333.2,
+  alternate_score: 76,
+  alternate_path: [
+    { lat: 40.6398, lon: -73.7789 },
+    { lat: 39.5, lon: -98.0 },
+    { lat: 33.9425, lon: -118.4081 },
+  ],
+  normalized_score_breakdown: {
+    preference: "balanced",
+    composite_score: 82,
+    component_scores: {
+      time: 85,
+      fuel: 78,
+      weather: 88,
+      delay: 90,
+      diversion: 75,
+    },
+    weights: { time: 0.25, fuel: 0.2, weather: 0.2, delay: 0.2, diversion: 0.15 },
+  },
+  fuel_breakdown: {
+    climb_fuel_gal: 4.0,
+    cruise_fuel_gal: 185.2,
+    descent_fuel_gal: 9.2,
+    trip_fuel_gal: 198.4,
+    reserve_fuel_gal: 12.9,
+    total_required_gal: 211.3,
+    warnings: [],
+  },
+  weather_checkpoints: [
+    {
+      airport_id: "wx-1",
+      icao: "KORD",
+      name: "Chicago O'Hare",
+      latitude: 41.9786,
+      longitude: -87.9048,
+      flight_category: "MVFR",
+      metar: { raw: "KORD 161856Z 18010KT 5SM BR BKN010", flight_category: "MVFR" },
+      weather_penalty: 15,
+    },
+  ],
+  route_candidates: [
+    { name: "direct", distance_nm: 2145, ete_minutes: 702, fuel_burn_gal: 198, score: 82, selected: true },
+    { name: "north_offset", distance_nm: 2182, ete_minutes: 718, fuel_burn_gal: 205, score: 76, selected: true },
+  ],
+  wind_data_quality: "pressure_level",
+  route_preference: "balanced",
+  warnings: ["Educational planning estimate only — verify with official sources."],
+  departure_weather: {
+    metar: { raw: "KJFK 161851Z 31012KT 10SM FEW050", flight_category: "VFR" },
+  },
+  destination_weather: {
+    metar: { raw: "KLAX 161853Z 25008KT 10SM CLR", flight_category: "VFR" },
+  },
+  diversion_airports: [
+    {
+      airport: {
+        id: "div-1",
+        ident: "KPHX",
+        icao_code: "KPHX",
+        iata_code: "PHX",
+        name: "Phoenix Sky Harbor Intl",
+        municipality: "Phoenix",
+        latitude: 33.4343,
+        longitude: -112.0116,
+        airport_type: "large_airport",
+        longest_runway_ft: 11489,
+      },
+      distance_from_route_nm: 35.2,
+      rank: 1,
+    },
+  ],
+  departure_airport: {
+    id: "dep-1",
+    ident: "KJFK",
+    icao_code: "KJFK",
+    iata_code: "JFK",
+    name: "John F Kennedy Intl",
+    municipality: "New York",
+    latitude: 40.6398,
+    longitude: -73.7789,
+    airport_type: "large_airport",
+    longest_runway_ft: 14511,
+  },
+  destination_airport: {
+    id: "dest-1",
+    ident: "KLAX",
+    icao_code: "KLAX",
+    iata_code: "LAX",
+    name: "Los Angeles Intl",
+    municipality: "Los Angeles",
+    latitude: 33.9425,
+    longitude: -118.4081,
+    airport_type: "large_airport",
+    longest_runway_ft: 12091,
+  },
+  aircraft_profile: {
+    id: "ac-1",
+    name: "Cirrus SR22",
+    cruise_speed_kt: 183,
+    fuel_burn_gph: 17.2,
+    cruise_altitude_ft: 12000,
+    is_preset: true,
+  },
+  created_at: "2026-06-16T12:00:00.000Z",
+};

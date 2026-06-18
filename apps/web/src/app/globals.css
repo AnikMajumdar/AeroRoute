@@ -1,0 +1,71 @@
+@import "leaflet/dist/leaflet.css";
+
+@import "tailwindcss/base";
+@import "tailwindcss/components";
+@import "tailwindcss/utilities";
+
+:root {
+  --background: #0b1120;
+  --foreground: #e2e8f0;
+  --accent: #38bdf8;
+  --accent-dark: #0284c7;
+  --card: #1e293b;
+  --border: #334155;
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  min-height: 100vh;
+}
+
+.leaflet-container {
+  height: 100%;
+  width: 100%;
+  border-radius: 0.75rem;
+  background: #0f172a;
+}
+
+.aeroroute-map-icon {
+  background: transparent;
+  border: none;
+}
+
+.map-pin {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9999px;
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  color: #0f172a;
+  border: 2px solid #fff;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+}
+
+.map-pin-dep {
+  width: 44px;
+  height: 44px;
+  background: #4ade80;
+}
+
+.map-pin-dest {
+  width: 44px;
+  height: 44px;
+  background: #f87171;
+}
+
+.map-pin-diversion {
+  width: 36px;
+  height: 36px;
+  background: #fbbf24;
+  font-size: 9px;
+}
+
+.map-pin-checkpoint {
+  width: 32px;
+  height: 32px;
+  background: #34d399;
+  font-size: 8px;
+}

@@ -176,6 +176,8 @@ class RouteResultDetail(BaseModel):
     destination_airport: AirportSummary | None = None
     aircraft_profile: AircraftProfile | None = None
     created_at: datetime | None = None
+    live_data_snapshot: dict[str, Any] | None = None
+    performance: dict[str, Any] | None = None
 
 
 class RouteListItem(BaseModel):

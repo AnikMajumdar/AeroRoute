@@ -1,0 +1,2 @@
+-- FAA NAS status is stored in route_results.departure_weather.faa_status and
+-- destination_weather.faa_status (existing JSONB columns). No schema change required.

@@ -90,9 +90,13 @@ async def get_current_user_id(
                 pass
 
     if x_user_id and not getattr(settings, "clerk_jwks_url", ""):
+        if settings.is_production:
+            raise HTTPException(status_code=401, detail="Authentication required")
         return x_user_id
 
     if x_user_id:
+        if settings.is_production:
+            raise HTTPException(status_code=401, detail="Authentication required")
         logger.warning("X-User-Id accepted without JWT — configure CLERK_JWKS_URL for production")
         return x_user_id
 
