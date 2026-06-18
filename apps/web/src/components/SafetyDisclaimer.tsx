@@ -1,20 +1,23 @@
 export function SafetyDisclaimer({ className = "" }: { className?: string }) {
   return (
     <div
-      className={`rounded-lg border border-amber-500/40 bg-amber-500/10 p-4 ${className}`}
+      className={`glass-card rounded-2xl border-amber-500/25 bg-amber-500/[0.06] p-5 ${className}`}
       role="alert"
     >
-      <div className="flex gap-3">
-        <span className="text-amber-400 text-xl shrink-0" aria-hidden>
-          ⚠️
+      <div className="flex gap-4">
+        <span
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-amber-500/15 text-lg"
+          aria-hidden
+        >
+          ⚠
         </span>
         <div>
-          <p className="font-semibold text-amber-300">Educational Tool — Not for Operational Use</p>
-          <p className="mt-1 text-sm text-amber-200/80">
+          <p className="font-semibold text-amber-200">Educational tool — not for operational use</p>
+          <p className="mt-1.5 text-sm leading-relaxed text-amber-100/75">
             AeroRoute is an educational route optimization platform. It is{" "}
-            <strong>not</strong> certified flight-planning software. Always verify routes,
-            weather, NOTAMs, fuel requirements, and airspace restrictions using official
-            sources (FAA, ICAO, operator manuals) before any flight.
+            <strong className="text-amber-100">not</strong> certified flight-planning software.
+            Always verify routes, weather, NOTAMs, fuel, and airspace through official FAA briefings,
+            ForeFlight/Garmin, POH, and pilot judgment before any flight.
           </p>
         </div>
       </div>

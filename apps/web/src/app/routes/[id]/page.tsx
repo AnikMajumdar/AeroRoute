@@ -7,6 +7,9 @@ import { LiveRestrictionsCard } from "@/components/LiveRestrictionsCard";
 import { HazardsCard } from "@/components/HazardsCard";
 import { LiveDataActions } from "@/components/LiveDataActions";
 import { SafetyDisclaimer } from "@/components/SafetyDisclaimer";
+import { Badge } from "@/components/ui/Badge";
+import { Card, CardHeader } from "@/components/ui/Card";
+import { StatCard } from "@/components/ui/StatCard";
 import { E2E_ROUTE_ID } from "@/lib/e2eMockRoute";
 import {
   api,
@@ -54,38 +57,32 @@ export default async function RouteResultPage({
     | undefined;
 
   return (
-    <PageLayout title="Route Result">
-      <div className="mb-6 flex flex-wrap items-center gap-4" data-testid="route-result-header">
-        <div className="text-2xl font-mono">
-          <span className="text-accent">{dep?.icao_code || dep?.ident}</span>
-          <span className="mx-3 text-slate-500">→</span>
-          <span className="text-accent">{dest?.icao_code || dest?.ident}</span>
+    <PageLayout title="Route Result" showDisclaimer={false}>
+      <Card className="mb-8" padding="p-6">
+        <div className="flex flex-wrap items-center gap-4" data-testid="route-result-header">
+          <div className="flex items-center gap-3 font-mono text-2xl font-semibold">
+            <span className="gradient-text">{dep?.icao_code || dep?.ident}</span>
+            <span className="text-muted">→</span>
+            <span className="gradient-text">{dest?.icao_code || dest?.ident}</span>
+          </div>
+          <Badge tone={route.status === "completed" ? "success" : "warning"}>{route.status}</Badge>
+          {route.route_preference && (
+            <Badge tone="muted" className="capitalize">
+              {route.route_preference.replace(/_/g, " ")}
+            </Badge>
+          )}
         </div>
-        <span
-          className={`rounded-full px-3 py-1 text-xs font-medium ${
-            route.status === "completed"
-              ? "bg-green-500/20 text-green-300"
-              : "bg-yellow-500/20 text-yellow-300"
-          }`}
-        >
-          {route.status}
-        </span>
-        {route.route_preference && (
-          <span className="rounded-full bg-slate-700/50 px-3 py-1 text-xs capitalize">
-            {route.route_preference.replace(/_/g, " ")}
-          </span>
-        )}
-      </div>
+      </Card>
 
       {route.warnings.length > 0 && (
-        <div className="mb-6 rounded-lg border border-amber-500/40 bg-amber-500/10 p-4">
-          <p className="font-semibold text-amber-300 mb-2">Warnings</p>
-          <ul className="list-disc pl-5 text-sm text-amber-200/80 space-y-1">
+        <Card className="mb-8 border-amber-500/25 bg-amber-500/[0.06]" padding="p-5">
+          <p className="font-semibold text-amber-200 mb-3">Warnings</p>
+          <ul className="list-disc space-y-1.5 pl-5 text-sm leading-relaxed text-amber-100/75">
             {route.warnings.map((w, i) => (
               <li key={i}>{w}</li>
             ))}
           </ul>
-        </div>
+        </Card>
       )}
 
       <div className="mb-6">
@@ -111,6 +108,7 @@ export default async function RouteResultPage({
             title="Primary Score"
             value={route.primary_score.toFixed(0)}
             subtitle={`out of 100 · ${windQualityLabel(route.wind_data_quality)}`}
+            icon="📊"
             highlight
           />
           <div className="grid grid-cols-2 gap-3">
@@ -135,27 +133,28 @@ export default async function RouteResultPage({
       </div>
 
       {scoreBreakdown?.component_scores && (
-        <div className="rounded-xl border border-border bg-card p-6 mb-8" data-testid="score-breakdown">
-          <h2 className="text-lg font-semibold mb-4">Score Breakdown</h2>
-          <p className="text-sm text-slate-400 mb-4">
+        <Card className="mb-8" padding="p-6" data-testid="score-breakdown">
+          <CardHeader
+            title="Score breakdown"
+            subtitle={`Preference: ${scoreBreakdown.preference}`}
+          />
+          <p className="mb-5 text-sm text-muted">
             Composite:{" "}
             <span className={`font-semibold ${scoreColor(scoreBreakdown.composite_score)}`}>
               {scoreBreakdown.composite_score.toFixed(0)}/100
             </span>
-            {" · "}
-            Preference: {scoreBreakdown.preference}
           </p>
-          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
+          <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {Object.entries(scoreBreakdown.component_scores).map(([key, value]) => (
               <ScoreBar key={key} label={key} value={value} />
             ))}
           </div>
-        </div>
+        </Card>
       )}
 
       {fuel && (
-        <div className="rounded-xl border border-border bg-card p-6 mb-8" data-testid="fuel-breakdown">
-          <h2 className="text-lg font-semibold mb-4">Fuel Plan (Educational)</h2>
+        <Card className="mb-8" padding="p-6" data-testid="fuel-breakdown">
+          <CardHeader title="Fuel plan" subtitle="Educational estimate — verify with POH and dispatch." />
           {route.fuel_price_usd_per_gal != null && (
             <p className="text-sm text-slate-400 mb-4">
               Planning fuel price:{" "}
@@ -181,12 +180,12 @@ export default async function RouteResultPage({
               ))}
             </ul>
           )}
-        </div>
+        </Card>
       )}
 
       {(dep || dest) && (
-        <div className="rounded-xl border border-border bg-card p-6 mb-8" data-testid="runway-info">
-          <h2 className="text-lg font-semibold mb-4">Runway Lengths</h2>
+        <Card className="mb-8" padding="p-6" data-testid="runway-info">
+          <CardHeader title="Runway lengths" />
           <div className="grid gap-4 sm:grid-cols-2 text-sm">
             {dep && (
               <div>
@@ -214,64 +213,68 @@ export default async function RouteResultPage({
               Aircraft planning minimum: {route.aircraft_profile.min_runway_ft.toLocaleString()} ft
             </p>
           )}
-        </div>
+        </Card>
       )}
 
       {route.delay_prediction?.delay_risk && (
-        <div className="rounded-xl border border-border bg-card p-6 mb-8" data-testid="delay-risk">
-          <h2 className="text-lg font-semibold mb-2">Delay Risk Estimate</h2>
-          <p className="text-sm text-slate-400 mb-3">
-            {route.delay_prediction.model_name || "rules_baseline_v1"} — AeroRoute estimate only, not dispatch advice
-          </p>
-          <div className="flex items-center gap-4 flex-wrap">
-            <span
-              className={`rounded-full px-4 py-1.5 text-sm font-semibold capitalize ${
+        <Card className="mb-8" padding="p-6" data-testid="delay-risk">
+          <CardHeader
+            title="Delay risk estimate"
+            subtitle={`${route.delay_prediction.model_name || "rules_baseline_v1"} — AeroRoute estimate only, not dispatch advice`}
+          />
+          <div className="flex flex-wrap items-center gap-4">
+            <Badge
+              tone={
                 route.delay_prediction.delay_risk === "high"
-                  ? "bg-red-500/20 text-red-300"
+                  ? "danger"
                   : route.delay_prediction.delay_risk === "medium"
-                    ? "bg-amber-500/20 text-amber-300"
-                    : "bg-green-500/20 text-green-300"
-              }`}
+                    ? "warning"
+                    : "success"
+              }
+              className="capitalize text-sm px-4 py-1.5"
             >
               {route.delay_prediction.delay_risk}
-            </span>
+            </Badge>
             {route.delay_prediction.confidence != null && (
-              <span className="text-sm text-slate-400">
+              <span className="text-sm text-muted">
                 Confidence: {(route.delay_prediction.confidence * 100).toFixed(0)}%
               </span>
             )}
           </div>
-        </div>
+        </Card>
       )}
 
       {route.ete_prediction && (
-        <div className="rounded-xl border border-border bg-card p-6 mb-8" data-testid="ete-prediction">
-          <h2 className="text-lg font-semibold mb-2">ETE Estimate</h2>
-          <p className="text-sm text-slate-400 mb-3">
-            Engine: {route.ete_prediction.model_name || "deterministic_engine_v1"}
-            {route.ete_prediction.is_surrogate && " · surrogate model (trained on engine labels)"}
-          </p>
-          <div className="flex flex-wrap gap-6 text-sm">
+        <Card className="mb-8" padding="p-6" data-testid="ete-prediction">
+          <CardHeader
+            title="ETE estimate"
+            subtitle={`Engine: ${route.ete_prediction.model_name || "deterministic_engine_v1"}${
+              route.ete_prediction.is_surrogate ? " · surrogate model (trained on engine labels)" : ""
+            }`}
+          />
+          <div className="flex flex-wrap gap-8 text-sm">
             <div>
-              <span className="text-slate-500">Deterministic ETE</span>
-              <p className="text-lg font-mono text-accent">
+              <span className="text-muted">Deterministic ETE</span>
+              <p className="mt-1 text-xl font-mono font-semibold gradient-text">
                 {formatDuration(route.ete_prediction.ete_minutes ?? route.primary_ete_minutes)}
               </p>
             </div>
             {route.ete_prediction.ml_adjusted_ete_minutes != null &&
               route.ete_prediction.ml_adjusted_ete_minutes !== route.ete_prediction.ete_minutes && (
                 <div>
-                  <span className="text-slate-500">ML-adjusted ETE</span>
-                  <p className="text-lg font-mono">
+                  <span className="text-muted">ML-adjusted ETE</span>
+                  <p className="mt-1 text-xl font-mono font-semibold">
                     {formatDuration(route.ete_prediction.ml_adjusted_ete_minutes)}
                   </p>
                 </div>
               )}
           </div>
           {route.ete_prediction.note && (
-            <p className="text-xs text-amber-200/70 mt-3">{route.ete_prediction.note}</p>
+            <p className="mt-4 rounded-xl border border-amber-500/20 bg-amber-500/[0.06] p-3 text-xs text-amber-100/80">
+              {route.ete_prediction.note}
+            </p>
           )}
-        </div>
+        </Card>
       )}
 
       <div className="grid gap-6 md:grid-cols-2 mb-8">
@@ -281,7 +284,7 @@ export default async function RouteResultPage({
 
       {route.weather_checkpoints && route.weather_checkpoints.length > 0 && (
         <div className="mb-8">
-          <h2 className="text-lg font-semibold mb-4">En-Route Weather Checkpoints</h2>
+          <h2 className="section-title mb-5 text-xl">En-route weather checkpoints</h2>
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
             {route.weather_checkpoints.map((cp, i) => (
               <CheckpointCard key={cp.airport_id || i} checkpoint={cp} />
@@ -291,29 +294,32 @@ export default async function RouteResultPage({
       )}
 
       {route.diversion_airports && route.diversion_airports.length > 0 && (
-        <div className="rounded-xl border border-border bg-card p-6 mb-8" data-testid="diversion-table">
-          <h2 className="text-lg font-semibold mb-4">Diversion Airports</h2>
-          <div className="overflow-x-auto">
+        <Card className="mb-8" padding="p-6" data-testid="diversion-table">
+          <CardHeader title="Diversion airports" />
+          <div className="overflow-x-auto -mx-2">
             <table className="w-full text-sm">
-              <thead className="text-left text-slate-400">
-                <tr>
-                  <th className="pb-2">Rank</th>
-                  <th className="pb-2">ICAO</th>
-                  <th className="pb-2">Name</th>
-                  <th className="pb-2">Distance from Route</th>
-                  <th className="pb-2">Runway</th>
+              <thead>
+                <tr className="border-b border-white/10 text-left text-muted">
+                  <th className="px-2 pb-3 font-medium">Rank</th>
+                  <th className="px-2 pb-3 font-medium">ICAO</th>
+                  <th className="px-2 pb-3 font-medium">Name</th>
+                  <th className="px-2 pb-3 font-medium">Distance</th>
+                  <th className="px-2 pb-3 font-medium">Runway</th>
                 </tr>
               </thead>
               <tbody>
                 {route.diversion_airports.map((d) => (
-                  <tr key={d.airport.id} className="border-t border-border">
-                    <td className="py-2">{d.rank}</td>
-                    <td className="py-2 font-mono text-accent">
+                  <tr
+                    key={d.airport.id}
+                    className="border-b border-white/5 transition-colors hover:bg-white/[0.03]"
+                  >
+                    <td className="px-2 py-3 text-muted">{d.rank}</td>
+                    <td className="px-2 py-3 font-mono font-medium text-sky-300">
                       {d.airport.icao_code || d.airport.ident}
                     </td>
-                    <td className="py-2">{d.airport.name}</td>
-                    <td className="py-2">{d.distance_from_route_nm.toFixed(1)} NM</td>
-                    <td className="py-2">
+                    <td className="px-2 py-3">{d.airport.name}</td>
+                    <td className="px-2 py-3">{d.distance_from_route_nm.toFixed(1)} NM</td>
+                    <td className="px-2 py-3">
                       {d.airport.longest_runway_ft
                         ? `${d.airport.longest_runway_ft.toLocaleString()} ft`
                         : "—"}
@@ -323,37 +329,13 @@ export default async function RouteResultPage({
               </tbody>
             </table>
           </div>
-        </div>
+        </Card>
       )}
 
       <RouteCopilot routeId={id} />
 
-      <SafetyDisclaimer />
+      <SafetyDisclaimer className="mt-8" />
     </PageLayout>
-  );
-}
-
-function StatCard({
-  title,
-  value,
-  subtitle,
-  highlight,
-}: {
-  title: string;
-  value: string;
-  subtitle?: string;
-  highlight?: boolean;
-}) {
-  return (
-    <div
-      className={`rounded-xl border p-4 ${
-        highlight ? "border-accent/40 bg-accent/5" : "border-border bg-card"
-      }`}
-    >
-      <p className="text-xs text-slate-400">{title}</p>
-      <p className={`text-xl font-semibold ${highlight ? "text-accent" : ""}`}>{value}</p>
-      {subtitle && <p className="text-xs text-slate-500 mt-1">{subtitle}</p>}
-    </div>
   );
 }
 
@@ -368,30 +350,30 @@ function RouteComparisonCard({
 }) {
   const isPrimary = variant === "primary";
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <h2 className="text-lg font-semibold text-accent mb-4">{title}</h2>
+    <Card padding="p-6">
+      <CardHeader title={title} />
       <dl className="grid grid-cols-2 gap-3 text-sm">
-        <dt className="text-slate-400">Distance</dt>
-        <dd>
+        <dt className="text-muted">Distance</dt>
+        <dd className="font-medium">
           {(isPrimary ? route.primary_distance_nm : route.alternate_distance_nm)!.toFixed(1)} NM
         </dd>
-        <dt className="text-slate-400">ETE</dt>
-        <dd>
+        <dt className="text-muted">ETE</dt>
+        <dd className="font-medium">
           {formatDuration(
             (isPrimary ? route.primary_ete_minutes : route.alternate_ete_minutes)!
           )}
         </dd>
-        <dt className="text-slate-400">Fuel Burn</dt>
-        <dd>
+        <dt className="text-muted">Fuel burn</dt>
+        <dd className="font-medium">
           {(isPrimary ? route.primary_fuel_burn_gal : route.alternate_fuel_burn_gal)!.toFixed(1)}{" "}
           gal
         </dd>
-        <dt className="text-slate-400">Score</dt>
-        <dd className="font-semibold text-accent">
+        <dt className="text-muted">Score</dt>
+        <dd className="font-semibold gradient-text">
           {(isPrimary ? route.primary_score : route.alternate_score)!.toFixed(0)}/100
         </dd>
       </dl>
-    </div>
+    </Card>
   );
 }
 
@@ -399,12 +381,12 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
   return (
     <div>
       <div className="flex justify-between text-xs mb-1">
-        <span className="text-slate-400 capitalize">{label}</span>
+        <span className="text-muted capitalize">{label.replace(/_/g, " ")}</span>
         <span className={scoreColor(value)}>{value.toFixed(0)}</span>
       </div>
-      <div className="h-2 rounded-full bg-slate-800 overflow-hidden">
+      <div className="h-2 overflow-hidden rounded-full bg-white/5">
         <div
-          className="h-full bg-accent rounded-full transition-all"
+          className="h-full rounded-full bg-gradient-to-r from-sky-400 to-cyan-400 transition-all"
           style={{ width: `${Math.min(100, value)}%` }}
         />
       </div>
@@ -415,8 +397,8 @@ function ScoreBar({ label, value }: { label: string; value: number }) {
 function FuelRow({ label, value, bold }: { label: string; value: string; bold?: boolean }) {
   return (
     <>
-      <dt className="text-slate-400">{label}</dt>
-      <dd className={bold ? "font-semibold text-accent" : ""}>{value}</dd>
+      <dt className="text-muted">{label}</dt>
+      <dd className={bold ? "font-semibold gradient-text" : "font-medium"}>{value}</dd>
     </>
   );
 }
@@ -434,27 +416,32 @@ function WeatherCard({
   const taf = data?.taf as Record<string, unknown> | undefined;
 
   return (
-    <div className="rounded-xl border border-border bg-card p-6">
-      <h2 className="text-lg font-semibold mb-2">{title}</h2>
-      <p className="text-sm text-slate-400 mb-4">{airport?.icao_code || airport?.ident}</p>
+    <Card padding="p-6">
+      <CardHeader title={title} subtitle={airport?.icao_code || airport?.ident} />
       {metar ? (
-        <div className="space-y-2 text-sm">
-          <p className="font-mono text-xs bg-slate-800 rounded p-2">{String(metar.raw || "—")}</p>
+        <div className="space-y-3 text-sm">
+          <p className="data-mono rounded-xl border border-white/5 bg-black/30 p-3 text-xs leading-relaxed">
+            {String(metar.raw || "—")}
+          </p>
           <p>
             Category:{" "}
-            <span className="text-accent">{String(metar.flight_category || "—")}</span>
+            <span className="font-semibold text-sky-300">
+              {String(metar.flight_category || "—")}
+            </span>
           </p>
         </div>
       ) : (
-        <p className="text-sm text-slate-500">Weather data unavailable</p>
+        <p className="text-sm text-muted">Weather data unavailable</p>
       )}
       {typeof taf?.raw === "string" && taf.raw.length > 0 && (
         <div className="mt-4">
-          <p className="text-xs text-slate-400 mb-1">TAF</p>
-          <p className="font-mono text-xs bg-slate-800 rounded p-2">{taf.raw}</p>
+          <p className="mb-2 text-xs font-medium uppercase tracking-wider text-muted">TAF</p>
+          <p className="data-mono rounded-xl border border-white/5 bg-black/30 p-3 text-xs leading-relaxed">
+            {taf.raw}
+          </p>
         </div>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -479,15 +466,15 @@ function CheckpointCard({
           : "text-red-300";
 
   return (
-    <div className="rounded-xl border border-border bg-card p-4">
-      <p className="font-mono text-accent">{checkpoint.icao}</p>
-      <p className="text-sm text-slate-400 truncate">{checkpoint.name}</p>
+    <Card padding="p-4" hover>
+      <p className="font-mono font-semibold text-sky-300">{checkpoint.icao}</p>
+      <p className="truncate text-sm text-muted">{checkpoint.name}</p>
       <p className={`mt-2 text-sm font-semibold ${categoryColor}`}>{category}</p>
       {typeof checkpoint.metar?.raw === "string" && checkpoint.metar.raw.length > 0 && (
-        <p className="mt-2 font-mono text-xs text-slate-500 line-clamp-2">
+        <p className="data-mono mt-2 line-clamp-2 text-xs text-muted">
           {checkpoint.metar.raw}
         </p>
       )}
-    </div>
+    </Card>
   );
 }

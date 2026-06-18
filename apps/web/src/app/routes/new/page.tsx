@@ -6,6 +6,9 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AirportAutocomplete } from "@/components/AirportAutocomplete";
 import { ConusNotice } from "@/components/ConusNotice";
 import { PageLayout } from "@/components/Layout";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
+import { Input, Label } from "@/components/ui/Input";
 import {
   api,
   AircraftProfile,
@@ -148,51 +151,57 @@ export default function NewRoutePage() {
   if (!isLoaded) return null;
 
   return (
-    <PageLayout title="Plan New Route">
-      <ConusNotice className="mb-6" />
+    <PageLayout
+      title="Plan New Route"
+      subtitle="Select airports, aircraft, and preferences — then calculate your educational route plan."
+      showDisclaimer={false}
+    >
+      <ConusNotice className="mb-8" />
 
-      <div className="mb-6 flex flex-wrap gap-3">
-        <button
+      <div className="mb-8">
+        <Button
           type="button"
+          variant="outline"
           onClick={() => void loadDemoRoute()}
           disabled={demoLoading || aircraftLoading}
-          className="rounded-lg border border-accent/40 bg-accent/10 px-4 py-2 text-sm text-accent hover:bg-accent/20 disabled:opacity-50"
         >
-          {demoLoading ? "Loading demo..." : "Use demo route (KJFK → KLAX)"}
-        </button>
+          {demoLoading ? "Loading demo…" : "Use demo route (KJFK → KLAX)"}
+        </Button>
       </div>
 
-      <form onSubmit={handleSubmit} className="max-w-3xl space-y-6">
-        <AirportAutocomplete label="Departure Airport" value={departure} onChange={setDeparture} />
-        <AirportAutocomplete
-          label="Destination Airport"
-          value={destination}
-          onChange={setDestination}
-        />
+      <form onSubmit={handleSubmit} className="max-w-3xl space-y-8">
+        <Card padding="p-6" className="space-y-6">
+          <AirportAutocomplete label="Departure Airport" value={departure} onChange={setDeparture} />
+          <AirportAutocomplete
+            label="Destination Airport"
+            value={destination}
+            onChange={setDestination}
+          />
+        </Card>
 
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Aircraft</label>
+        <Card padding="p-6">
+          <Label>Aircraft</Label>
           {aircraftLoading ? (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {[1, 2].map((i) => (
-                <div key={i} className="h-24 animate-pulse rounded-xl bg-card border border-border" />
+                <div key={i} className="h-24 animate-pulse rounded-xl bg-white/5" />
               ))}
             </div>
           ) : (
-            <div className="grid gap-3 sm:grid-cols-2">
+            <div className="mt-3 grid gap-3 sm:grid-cols-2">
               {aircraft.map((a) => (
                 <button
                   key={a.id}
                   type="button"
                   onClick={() => setSelectedAircraft(a.id)}
-                  className={`rounded-xl border p-4 text-left transition-colors ${
+                  className={`rounded-xl border p-4 text-left transition-all duration-200 ${
                     selectedAircraft === a.id
-                      ? "border-accent bg-accent/10"
-                      : "border-border bg-card hover:border-slate-500"
+                      ? "border-sky-400/50 bg-sky-500/10 ring-2 ring-sky-400/20"
+                      : "border-white/10 bg-white/[0.02] hover:border-white/20 hover:bg-white/[0.04]"
                   }`}
                 >
                   <p className="font-semibold">{a.name}</p>
-                  <p className="mt-1 text-xs text-slate-400">
+                  <p className="mt-1 text-xs text-muted">
                     {a.cruise_speed_kt} kt · {a.fuel_burn_gph} gph
                     {a.cruise_altitude_ft ? ` · ${a.cruise_altitude_ft.toLocaleString()} ft` : ""}
                   </p>
@@ -201,93 +210,84 @@ export default function NewRoutePage() {
             </div>
           )}
           {aircraftError && (
-            <div className="mt-2 flex items-center gap-3">
+            <div className="mt-3 flex items-center gap-3">
               <p className="text-sm text-red-300">{aircraftError}</p>
               <button
                 type="button"
                 onClick={() => void loadAircraft()}
-                className="text-sm text-accent hover:underline"
+                className="text-sm text-sky-400 hover:underline"
               >
                 Retry
               </button>
             </div>
           )}
-        </div>
+        </Card>
 
-        <div>
-          <label className="block text-sm font-medium text-slate-300 mb-2">Route Preference</label>
-          <div className="grid gap-2 sm:grid-cols-2">
+        <Card padding="p-6">
+          <Label>Route preference</Label>
+          <div className="mt-3 grid gap-2 sm:grid-cols-2">
             {ROUTE_PREFERENCES.map((pref) => (
               <button
                 key={pref.id}
                 type="button"
                 onClick={() => setRoutePreference(pref.id)}
-                className={`rounded-lg border px-4 py-3 text-left text-sm ${
+                className={`rounded-xl border px-4 py-3 text-left text-sm transition-all ${
                   routePreference === pref.id
-                    ? "border-accent bg-accent/10"
-                    : "border-border bg-card hover:border-slate-500"
+                    ? "border-sky-400/50 bg-sky-500/10 ring-2 ring-sky-400/20"
+                    : "border-white/10 bg-white/[0.02] hover:border-white/20"
                 }`}
               >
                 <span className="font-medium">{pref.label}</span>
-                <span className="mt-0.5 block text-xs text-slate-400">{pref.desc}</span>
+                <span className="mt-0.5 block text-xs text-muted">{pref.desc}</span>
               </button>
             ))}
           </div>
-        </div>
+        </Card>
 
         {selectedAircraftProfile?.cruise_altitude_ft && (
-          <p className="text-xs text-slate-500">
-            Cruise winds sampled near {selectedAircraftProfile.cruise_altitude_ft.toLocaleString()} ft
-            (nearest GFS pressure level).
+          <p className="text-xs text-muted">
+            Cruise winds sampled near {selectedAircraftProfile.cruise_altitude_ft.toLocaleString()} ft.
           </p>
         )}
 
-        <div className="grid gap-4 sm:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">
-              Departure Date & Time
-            </label>
-            <input
-              type="datetime-local"
-              value={departureTime}
-              min={timeBounds.min}
-              max={timeBounds.max}
-              onChange={(e) => setDepartureTime(e.target.value)}
-              className="w-full rounded-lg border border-border bg-card px-4 py-2.5 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-              required
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              Now through {FORECAST_HORIZON_DAYS} days ahead (forecast limit).
-            </p>
+        <Card padding="p-6">
+          <div className="grid gap-5 sm:grid-cols-2">
+            <div>
+              <Label>Departure date & time</Label>
+              <Input
+                type="datetime-local"
+                value={departureTime}
+                min={timeBounds.min}
+                max={timeBounds.max}
+                onChange={(e) => setDepartureTime(e.target.value)}
+                required
+              />
+              <p className="mt-2 text-xs text-muted">
+                Now through {FORECAST_HORIZON_DAYS} days ahead (forecast limit).
+              </p>
+            </div>
+            <div>
+              <Label>Fuel price ($/gal)</Label>
+              <Input
+                type="number"
+                step="0.01"
+                min="0"
+                value={fuelPrice}
+                onChange={(e) => setFuelPrice(e.target.value)}
+              />
+            </div>
           </div>
-          <div>
-            <label className="block text-sm font-medium text-slate-300 mb-1">
-              Fuel Price ($/gal)
-            </label>
-            <input
-              type="number"
-              step="0.01"
-              min="0"
-              value={fuelPrice}
-              onChange={(e) => setFuelPrice(e.target.value)}
-              className="w-full rounded-lg border border-border bg-card px-4 py-2.5 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-            />
-          </div>
-        </div>
+        </Card>
 
         {error && (
-          <p className="rounded-lg border border-red-500/40 bg-red-500/10 px-4 py-3 text-sm text-red-300">
+          <div className="rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-300">
             {error}
-          </p>
+          </div>
         )}
 
-        <button
-          type="submit"
-          disabled={loading || aircraftLoading || aircraft.length === 0}
-          className="rounded-lg bg-accent px-6 py-3 font-semibold text-slate-900 hover:bg-accent/90 disabled:opacity-50 transition-colors"
-        >
-          {loading ? "Calculating route..." : "Calculate Route"}
-        </button>
+        <Button type="submit" size="lg" disabled={loading || aircraftLoading || aircraft.length === 0}>
+          {loading ? "Calculating route…" : "Calculate Route"}
+        </Button>
       </form>
     </PageLayout>
   );

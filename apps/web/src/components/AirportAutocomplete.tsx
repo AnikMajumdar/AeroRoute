@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, Airport } from "@/lib/api";
+import { Input, Label } from "@/components/ui/Input";
 
 interface AirportAutocompleteProps {
   label: string;
@@ -25,7 +26,7 @@ export function AirportAutocomplete({
   label,
   value,
   onChange,
-  placeholder = "Start typing ICAO, IATA, or airport name...",
+  placeholder = "Search ICAO, IATA, or airport name…",
 }: AirportAutocompleteProps) {
   const [inputText, setInputText] = useState("");
   const [results, setResults] = useState<Airport[]>([]);
@@ -117,33 +118,36 @@ export function AirportAutocomplete({
 
   return (
     <div ref={wrapperRef} className="relative">
-      <label className="block text-sm font-medium text-slate-300 mb-1">{label}</label>
-      <input
-        type="text"
-        role="combobox"
-        aria-expanded={open}
-        aria-controls={listId.current}
-        aria-autocomplete="list"
-        value={inputText}
-        onChange={handleInputChange}
-        onFocus={() => {
-          if (!value && getSearchTerm(inputText).length >= 2) {
-            void searchAirports(inputText);
-          }
-        }}
-        onKeyDown={handleKeyDown}
-        placeholder={placeholder}
-        autoComplete="off"
-        className="w-full rounded-lg border border-border bg-card px-4 py-2.5 text-foreground placeholder:text-slate-500 focus:border-accent focus:outline-none focus:ring-1 focus:ring-accent"
-      />
-      {loading && (
-        <span className="absolute right-3 top-9 text-xs text-slate-500">Searching...</span>
-      )}
+      <Label>{label}</Label>
+      <div className="relative">
+        <Input
+          type="text"
+          role="combobox"
+          aria-expanded={open}
+          aria-controls={listId.current}
+          aria-autocomplete="list"
+          value={inputText}
+          onChange={handleInputChange}
+          onFocus={() => {
+            if (!value && getSearchTerm(inputText).length >= 2) {
+              void searchAirports(inputText);
+            }
+          }}
+          onKeyDown={handleKeyDown}
+          placeholder={placeholder}
+          autoComplete="off"
+        />
+        {loading && (
+          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-muted">
+            Searching…
+          </span>
+        )}
+      </div>
       {open && results.length > 0 && (
         <ul
           id={listId.current}
           role="listbox"
-          className="absolute z-50 mt-1 max-h-60 w-full overflow-auto rounded-lg border border-border bg-card shadow-xl"
+          className="absolute z-50 mt-2 max-h-64 w-full overflow-auto rounded-xl border border-white/10 bg-slate-900/95 shadow-card backdrop-blur-xl"
         >
           {results.map((airport, index) => (
             <li key={airport.id} role="option" aria-selected={index === highlightedIndex}>
@@ -151,16 +155,18 @@ export function AirportAutocomplete({
                 type="button"
                 onMouseEnter={() => setHighlightedIndex(index)}
                 onClick={() => selectAirport(airport)}
-                className={`w-full px-4 py-2.5 text-left transition-colors ${
-                  index === highlightedIndex ? "bg-slate-700/70" : "hover:bg-slate-700/50"
+                className={`w-full px-4 py-3 text-left transition-colors ${
+                  index === highlightedIndex
+                    ? "bg-sky-500/15 text-foreground"
+                    : "hover:bg-white/5"
                 }`}
               >
-                <span className="font-mono text-accent">
+                <span className="font-mono text-sm font-semibold text-sky-300">
                   {airport.icao_code || airport.iata_code || airport.ident}
                 </span>
-                <span className="ml-2 text-foreground">{airport.name}</span>
+                <span className="ml-2 text-sm">{airport.name}</span>
                 {airport.municipality && (
-                  <span className="ml-2 text-sm text-slate-400">{airport.municipality}</span>
+                  <span className="ml-2 text-xs text-muted">{airport.municipality}</span>
                 )}
               </button>
             </li>
@@ -168,12 +174,12 @@ export function AirportAutocomplete({
         </ul>
       )}
       {showEmpty && (
-        <div className="absolute z-50 mt-1 w-full rounded-lg border border-border bg-card px-4 py-3 text-sm text-slate-400 shadow-xl">
-          No matching airports with weather data. Try a medium/large US field (e.g. KJFK, KLAX).
+        <div className="absolute z-50 mt-2 w-full rounded-xl border border-white/10 bg-slate-900/95 px-4 py-3 text-sm text-muted shadow-card backdrop-blur-xl">
+          No matching airports. Try KJFK, KLAX, or another medium/large US field.
         </div>
       )}
-      <p className="mt-1 text-xs text-slate-500">
-        Only continental US medium and large airports with ICAO weather reporting are listed.
+      <p className="mt-2 text-xs text-muted">
+        Continental US medium/large airports with ICAO codes only.
       </p>
     </div>
   );

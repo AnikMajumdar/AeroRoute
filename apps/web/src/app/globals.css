@@ -5,25 +5,81 @@
 @import "tailwindcss/utilities";
 
 :root {
-  --background: #0b1120;
-  --foreground: #e2e8f0;
+  --background: #060a14;
+  --foreground: #f1f5f9;
+  --muted: #94a3b8;
   --accent: #38bdf8;
-  --accent-dark: #0284c7;
-  --card: #1e293b;
-  --border: #334155;
+  --accent-secondary: #818cf8;
+  --card: rgba(15, 23, 42, 0.65);
+  --border: rgba(148, 163, 184, 0.12);
+  --glow: rgba(56, 189, 248, 0.35);
 }
 
-body {
-  background: var(--background);
-  color: var(--foreground);
-  min-height: 100vh;
+@layer base {
+  body {
+    background: var(--background);
+    color: var(--foreground);
+    min-height: 100vh;
+  }
+}
+
+@layer components {
+  .mesh-bg {
+    background-color: var(--background);
+    background-image:
+      radial-gradient(ellipse 80% 50% at 50% -20%, rgba(56, 189, 248, 0.15), transparent),
+      radial-gradient(ellipse 60% 40% at 100% 0%, rgba(129, 140, 248, 0.12), transparent),
+      radial-gradient(ellipse 50% 30% at 0% 100%, rgba(14, 165, 233, 0.08), transparent);
+  }
+
+  .glass-card {
+    background: linear-gradient(
+      135deg,
+      rgba(255, 255, 255, 0.06) 0%,
+      rgba(255, 255, 255, 0.02) 100%
+    );
+    backdrop-filter: blur(16px);
+    -webkit-backdrop-filter: blur(16px);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    box-shadow:
+      0 4px 24px rgba(0, 0, 0, 0.25),
+      inset 0 1px 0 rgba(255, 255, 255, 0.06);
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, #7dd3fc 0%, #38bdf8 45%, #a5b4fc 100%);
+    -webkit-background-clip: text;
+    background-clip: text;
+    color: transparent;
+  }
+
+  .nav-link {
+    @apply relative text-sm font-medium text-slate-400 transition-colors hover:text-sky-300;
+  }
+
+  .nav-link::after {
+    content: "";
+    @apply absolute -bottom-1 left-0 h-px w-0 bg-gradient-to-r from-sky-400 to-cyan-400 transition-all duration-300;
+  }
+
+  .nav-link:hover::after {
+    @apply w-full;
+  }
+
+  .section-title {
+    @apply text-3xl font-bold tracking-tight md:text-4xl;
+  }
+
+  .data-mono {
+    @apply font-mono tracking-tight;
+  }
 }
 
 .leaflet-container {
   height: 100%;
   width: 100%;
-  border-radius: 0.75rem;
-  background: #0f172a;
+  border-radius: 1rem;
+  background: #0a0f1a;
 }
 
 .aeroroute-map-icon {
@@ -41,31 +97,50 @@ body {
   letter-spacing: 0.02em;
   color: #0f172a;
   border: 2px solid #fff;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.45);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
 }
 
 .map-pin-dep {
   width: 44px;
   height: 44px;
-  background: #4ade80;
+  background: linear-gradient(135deg, #4ade80, #22c55e);
 }
 
 .map-pin-dest {
   width: 44px;
   height: 44px;
-  background: #f87171;
+  background: linear-gradient(135deg, #f87171, #ef4444);
 }
 
 .map-pin-diversion {
   width: 36px;
   height: 36px;
-  background: #fbbf24;
+  background: linear-gradient(135deg, #fbbf24, #f59e0b);
   font-size: 9px;
 }
 
 .map-pin-checkpoint {
   width: 32px;
   height: 32px;
-  background: #34d399;
+  background: linear-gradient(135deg, #34d399, #10b981);
   font-size: 8px;
+}
+
+/* Subtle scroll polish */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(148, 163, 184, 0.25);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(148, 163, 184, 0.4);
 }

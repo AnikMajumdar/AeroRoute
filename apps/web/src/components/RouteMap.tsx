@@ -155,7 +155,7 @@ export function RouteMap({
   }
 
   return (
-    <div className={`${className} relative rounded-xl overflow-hidden border border-border`}>
+    <div className={`${className} relative overflow-hidden rounded-2xl border border-white/10 shadow-card`}>
       <MapContainer
         center={defaultCenter}
         zoom={4}

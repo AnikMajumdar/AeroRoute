@@ -1,6 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/ui/Button";
+import { Card } from "@/components/ui/Card";
 
 interface LiveDataActionsProps {
   routeId: string;
@@ -20,25 +22,19 @@ export function LiveDataActions({ routeId: _routeId, userId: _userId }: LiveData
   }
 
   return (
-    <div className="flex flex-wrap gap-2 items-center" data-testid="live-data-actions">
-      <p className="text-sm text-slate-400 w-full">
-        Live FAA and aviation weather integrations are disabled. Route planning uses Open-Meteo winds and airport
-        data only.
+    <Card padding="p-5" data-testid="live-data-actions">
+      <p className="text-sm text-muted">
+        Live FAA and aviation weather integrations are disabled. Route planning uses Open-Meteo winds
+        and airport data only.
       </p>
-      <button
-        type="button"
-        onClick={() => router.refresh()}
-        className="rounded-lg border border-border bg-slate-800 px-3 py-2 text-sm hover:bg-slate-700"
-      >
-        Reload Page
-      </button>
-      <button
-        type="button"
-        onClick={askCopilotHazards}
-        className="rounded-lg border border-accent/40 bg-accent/10 px-3 py-2 text-sm text-accent hover:bg-accent/20"
-      >
-        Ask Copilot About Hazards
-      </button>
-    </div>
+      <div className="mt-4 flex flex-wrap gap-3">
+        <Button type="button" variant="secondary" size="sm" onClick={() => router.refresh()}>
+          Reload page
+        </Button>
+        <Button type="button" variant="outline" size="sm" onClick={askCopilotHazards}>
+          Ask Copilot about hazards
+        </Button>
+      </div>
+    </Card>
   );
 }

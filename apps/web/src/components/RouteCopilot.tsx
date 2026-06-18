@@ -3,6 +3,10 @@
 import { useAuth } from "@clerk/nextjs";
 import { useCallback, useEffect, useState } from "react";
 import { api, CopilotChatResponse } from "@/lib/api";
+import { Badge } from "@/components/ui/Badge";
+import { Button } from "@/components/ui/Button";
+import { Card, CardHeader } from "@/components/ui/Card";
+import { Input } from "@/components/ui/Input";
 
 const DEFAULT_SUGGESTED_QUESTIONS = [
   "Why was this route selected?",
@@ -67,46 +71,35 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
   );
 
   return (
-    <div
-      className="rounded-xl border border-violet-500/20 bg-gradient-to-br from-card via-card to-violet-950/20 p-6 mb-8 shadow-lg shadow-violet-950/20"
+    <Card
+      className="mb-8 border-violet-500/20 bg-gradient-to-br from-violet-500/[0.08] via-transparent to-indigo-500/[0.06] shadow-glow-sm"
+      padding="p-6"
       data-testid="route-copilot"
     >
-      <div className="flex items-start justify-between gap-4 mb-4">
-        <div className="flex items-start gap-3">
-          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-violet-500/15 text-lg">
-            ✦
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold">AeroRoute Copilot</h2>
-            <p className="text-sm text-slate-400 mt-0.5">
-              Powered by Gemini · answers from this route&apos;s data only
-            </p>
-            {model && enabled && (
-              <p className="text-xs text-slate-500 mt-1 font-mono">{model}</p>
-            )}
-          </div>
-        </div>
-        {enabled === true && (
-          <span className="shrink-0 rounded-full bg-green-500/20 px-2.5 py-1 text-xs text-green-300">
-            Online
-          </span>
-        )}
-        {enabled === false && (
-          <span className="shrink-0 rounded-full bg-slate-700 px-2.5 py-1 text-xs text-slate-400">
-            Offline
-          </span>
-        )}
-      </div>
+      <CardHeader
+        title="AeroRoute Copilot"
+        subtitle="Powered by Gemini · answers from this route's data only"
+        action={
+          enabled === true ? (
+            <Badge tone="success">Online</Badge>
+          ) : enabled === false ? (
+            <Badge tone="muted">Offline</Badge>
+          ) : null
+        }
+      />
+      {model && enabled && (
+        <p className="-mt-3 mb-4 font-mono text-xs text-muted">{model}</p>
+      )}
 
       {enabled === null && (
-        <p className="text-sm text-slate-500 animate-pulse">Checking copilot status...</p>
+        <p className="animate-pulse text-sm text-muted">Checking copilot status...</p>
       )}
 
       {enabled === false && (
-        <div className="rounded-lg border border-border bg-slate-900/50 p-4 text-sm text-slate-400">
+        <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm text-muted">
           <p>
-            Add <code className="text-accent">GEMINI_API_KEY</code> and{" "}
-            <code className="text-accent">COPILOT_ENABLED=true</code> to{" "}
+            Add <code className="text-sky-300">GEMINI_API_KEY</code> and{" "}
+            <code className="text-sky-300">COPILOT_ENABLED=true</code> to{" "}
             <code className="text-xs">apps/api/.env</code>, then restart the API.
           </p>
         </div>
@@ -114,14 +107,14 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
 
       {enabled === true && (
         <>
-          <div className="flex flex-wrap gap-2 mb-4">
+          <div className="mb-4 flex flex-wrap gap-2">
             {suggestedQuestions.map((q) => (
               <button
                 key={q}
                 type="button"
                 onClick={() => void ask(q)}
                 disabled={loading}
-                className="rounded-full border border-violet-500/20 bg-violet-500/5 px-3 py-1.5 text-xs text-slate-300 hover:border-violet-400/40 hover:bg-violet-500/10 hover:text-violet-200 disabled:opacity-50 transition-colors"
+                className="rounded-full border border-violet-500/25 bg-violet-500/10 px-3 py-1.5 text-xs text-violet-100/90 transition-colors hover:border-violet-400/40 hover:bg-violet-500/15 disabled:opacity-50"
               >
                 {q}
               </button>
@@ -135,30 +128,30 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
             }}
             className="flex gap-2"
           >
-            <input
+            <Input
               type="text"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}
               placeholder="Ask about this route..."
               disabled={loading}
-              className="flex-1 rounded-lg border border-border bg-slate-900/80 px-4 py-2.5 text-sm focus:border-violet-400/50 focus:outline-none focus:ring-1 focus:ring-violet-400/30 disabled:opacity-50"
+              className="flex-1 border-violet-500/20 focus:border-violet-400/50 focus:ring-violet-400/20"
               data-testid="copilot-input"
             />
-            <button
+            <Button
               type="submit"
               disabled={loading || !question.trim()}
-              className="rounded-lg bg-violet-500 px-4 py-2.5 text-sm font-semibold text-white hover:bg-violet-400 disabled:opacity-50 transition-colors"
+              className="!bg-gradient-to-r !from-violet-500 !to-indigo-500 !text-white shrink-0"
               data-testid="copilot-submit"
             >
               {loading ? "Thinking..." : "Ask"}
-            </button>
+            </Button>
           </form>
         </>
       )}
 
       {error && (
         <div
-          className="mt-4 rounded-lg border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
+          className="mt-4 rounded-xl border border-red-500/30 bg-red-500/10 px-4 py-3 text-sm text-red-200"
           data-testid="copilot-error"
         >
           {error}
@@ -167,21 +160,19 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
 
       {response && (
         <div className="mt-4 space-y-3" data-testid="copilot-response">
-          <div className="rounded-lg border border-violet-500/20 bg-violet-500/5 p-4 text-sm leading-relaxed text-slate-200">
+          <div className="rounded-xl border border-violet-500/20 bg-violet-500/5 p-4 text-sm leading-relaxed">
             {response.answer}
           </div>
-          <p className="text-xs text-amber-300/90 border border-amber-500/30 rounded-lg p-3">
+          <p className="rounded-xl border border-amber-500/25 bg-amber-500/[0.06] p-3 text-xs text-amber-100/80">
             {response.safety_note}
           </p>
-          <p className="text-xs text-slate-500">
-            Sources: {response.sources_used.join(", ")}
-          </p>
+          <p className="text-xs text-muted">Sources: {response.sources_used.join(", ")}</p>
         </div>
       )}
 
-      <p className="mt-4 text-xs text-slate-500">
+      <p className="mt-4 text-xs text-muted">
         Educational tool only — not for operational flight planning.
       </p>
-    </div>
+    </Card>
   );
 }
