@@ -28,6 +28,7 @@ from app.schemas import (
     RouteCalculateRequest,
     RouteListItem,
     RouteResultDetail,
+    RouteSegmentDetail,
 )
 from app.services.aircraft_presets import ensure_aircraft_presets
 from app.services.copilot import (
@@ -616,17 +617,28 @@ async def get_route(
     score_breakdown = result.data.get("normalized_score_breakdown") or result.data.get("score_breakdown")
     delay_prediction, ete_prediction = _load_ml_predictions(supabase, route_id)
 
-    live_snap = (
-        supabase.table("live_data_snapshots")
-        .select("snapshot")
-        .eq("route_result_id", route_id)
-        .order("fetched_at", desc=True)
-        .limit(1)
-        .execute()
-    )
+    live_snap = None
     live_data_snapshot = None
-    if live_snap.data:
-        live_data_snapshot = live_snap.data[0].get("snapshot")
+    try:
+        live_snap = (
+            supabase.table("live_data_snapshots")
+            .select("snapshot")
+            .eq("route_result_id", route_id)
+            .order("fetched_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if live_snap.data:
+            live_data_snapshot = live_snap.data[0].get("snapshot")
+    except Exception as exc:
+        logger.debug("live_data_snapshots lookup skipped: %s", exc)
+
+    segment_rows = segments_result.data or []
+    try:
+        validated_segments = [RouteSegmentDetail(**row).model_dump() for row in segment_rows]
+    except Exception as exc:
+        logger.warning("Route segment validation failed, omitting segments: %s", exc)
+        validated_segments = []
 
     return RouteResultDetail(
         id=result.data["id"],
@@ -659,7 +671,7 @@ async def get_route(
         destination_weather=result.data.get("destination_weather"),
         departure_status=_faa_status_from_weather(result.data.get("departure_weather")),
         destination_status=_faa_status_from_weather(result.data.get("destination_weather")),
-        segments=segments_result.data or [],
+        segments=validated_segments,
         diversion_airports=diversion_details,
         departure_airport=AirportSummary(**row_to_airport(dep.data)),
         destination_airport=AirportSummary(**row_to_airport(dest.data)),

@@ -22,6 +22,7 @@ import {
   getDepartureTimeBounds,
   toLocalDatetimeInputValue,
 } from "@/lib/mapUtils";
+import { cacheRouteResult } from "@/lib/routeCache";
 
 const DEMO_ROUTE = {
   departureQuery: "KJFK",
@@ -142,6 +143,7 @@ export default function NewRoutePage() {
         userId,
         token
       );
+      cacheRouteResult(result);
       router.push(`/routes/${result.id}`);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Route calculation failed");
