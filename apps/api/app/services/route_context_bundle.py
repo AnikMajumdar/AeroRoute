@@ -126,16 +126,23 @@ async def get_route_context(
     route_payload = {**route_data, "id": route_id}
     predictions = _load_predictions(supabase, route_id)
 
-    live_snap_row = (
-        supabase.table("live_data_snapshots")
-        .select("snapshot, fetched_at")
-        .eq("route_result_id", route_id)
-        .order("fetched_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-    live_data_snapshot = live_snap_row.data[0]["snapshot"] if live_snap_row.data else None
-    live_fetched_at = live_snap_row.data[0].get("fetched_at") if live_snap_row.data else None
+    live_snap_row = None
+    live_data_snapshot = None
+    live_fetched_at = None
+    try:
+        live_snap_row = (
+            supabase.table("live_data_snapshots")
+            .select("snapshot, fetched_at")
+            .eq("route_result_id", route_id)
+            .order("fetched_at", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if live_snap_row.data:
+            live_data_snapshot = live_snap_row.data[0]["snapshot"]
+            live_fetched_at = live_snap_row.data[0].get("fetched_at")
+    except Exception as exc:
+        logger.debug("live_data_snapshots lookup skipped: %s", exc)
 
     dep_wx = route_data.get("departure_weather") or {}
     dest_wx = route_data.get("destination_weather") or {}

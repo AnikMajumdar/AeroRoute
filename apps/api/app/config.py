@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 # Always load .env from apps/api/, even if the command is run from repo root
@@ -52,6 +53,15 @@ class Settings(BaseSettings):
     cache_diversion_ttl: int = 1800
     async_route_calc: bool = False
     route_calc_timeout_sec: float = 15.0
+
+    @field_validator("copilot_enabled", mode="before")
+    @classmethod
+    def parse_copilot_enabled(cls, value: object) -> bool:
+        if isinstance(value, bool):
+            return value
+        if isinstance(value, str):
+            return value.strip().lower() in ("1", "true", "yes", "on")
+        return bool(value)
 
     @property
     def is_production(self) -> bool:

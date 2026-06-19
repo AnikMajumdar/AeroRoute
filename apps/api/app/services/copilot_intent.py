@@ -88,14 +88,25 @@ async def build_intent_context(
 
     for name in tool_names:
         fn = tool_map[name]
-        result = await fn(supabase, route_id, user_id)
-        tool_results[name] = result
-        sources.append(result.get("source", name))
+        try:
+            result = await fn(supabase, route_id, user_id)
+            tool_results[name] = result
+            sources.append(result.get("source", name))
+        except Exception as exc:
+            tool_results[name] = {
+                "error": str(exc),
+                "source": name,
+                "note": "Tool data unavailable for this route.",
+            }
+            sources.append(name)
 
     # Slim base context always included
     from app.services.route_context_bundle import get_route_context
 
-    base = await get_route_context(supabase, route_id, user_id, include_full_segments=False)
+    try:
+        base = await get_route_context(supabase, route_id, user_id, include_full_segments=False)
+    except Exception as exc:
+        raise RuntimeError(f"Could not load route context: {exc}") from exc
     slim = {
         "route_id": route_id,
         "intent": intent,

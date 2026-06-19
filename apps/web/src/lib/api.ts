@@ -1,16 +1,29 @@
-/** Browser calls same-origin proxy to avoid CORS; server components call Modal directly. */
+/** Browser calls Modal directly when NEXT_PUBLIC_API_URL is set (avoids Vercel proxy timeout). */
+function resolvePublicApiUrl(): string | null {
+  const url = process.env.NEXT_PUBLIC_API_URL?.replace(/\/$/, "");
+  if (!url) return null;
+  return url;
+}
+
 function apiBaseUrl(): string {
   if (typeof window !== "undefined") {
+    // Copilot Gemini calls can take 30–45s; Vercel's /api/backend proxy times out ~10s on Hobby.
+    const direct = resolvePublicApiUrl();
+    if (direct) return direct;
     return "/api/backend";
   }
-  const url = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
+  const url = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
   return url.replace(/\/$/, "");
 }
 
-function formatApiError(error: unknown): string {
-  if (!error || typeof error !== "object") return "Request failed";
-  const detail = (error as { detail?: unknown }).detail;
+function formatApiError(error: unknown, status?: number): string {
+  if (!error || typeof error !== "object") {
+    return status ? `Request failed (HTTP ${status})` : "Request failed";
+  }
+  const record = error as Record<string, unknown>;
+  const detail = record.detail;
   if (typeof detail === "string") return detail;
+  if (typeof record.message === "string") return record.message;
   if (Array.isArray(detail)) {
     return detail
       .map((item) =>
@@ -20,7 +33,7 @@ function formatApiError(error: unknown): string {
       )
       .join("; ");
   }
-  return "Request failed";
+  return status ? `Request failed (HTTP ${status})` : "Request failed";
 }
 
 export type RoutePreference = "balanced" | "fastest" | "fuel_saver" | "weather_cautious";
@@ -219,12 +232,22 @@ async function apiFetch<T>(
     throw new Error(`Cannot reach the API. ${hint}`);
   }
 
+  const bodyText = await response.text();
+
   if (!response.ok) {
-    const error = await response.json().catch(() => ({ detail: "Request failed" }));
-    throw new Error(formatApiError(error) || `API error: ${response.status}`);
+    let error: unknown = null;
+    try {
+      error = bodyText ? JSON.parse(bodyText) : null;
+    } catch {
+      error = bodyText ? { detail: bodyText.slice(0, 300) } : null;
+    }
+    throw new Error(formatApiError(error, response.status) || `API error: ${response.status}`);
   }
 
-  return response.json();
+  if (!bodyText) {
+    return undefined as T;
+  }
+  return JSON.parse(bodyText) as T;
 }
 
 export const ROUTE_PREFERENCES: { id: RoutePreference; label: string; desc: string }[] = [

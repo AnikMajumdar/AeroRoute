@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
+/** Allow long backend calls when server components use this proxy (copilot can take 30s+). */
+export const maxDuration = 60;
+
 function backendBaseUrl(): string {
   const url = process.env.API_URL || process.env.NEXT_PUBLIC_API_URL || "http://localhost:8000";
   return url.replace(/\/$/, "");

@@ -102,9 +102,11 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
       {enabled === false && (
         <div className="rounded-xl border border-white/10 bg-black/20 p-4 text-sm text-muted">
           <p>
-            Add <code className="text-sky-300">GEMINI_API_KEY</code> and{" "}
-            <code className="text-sky-300">COPILOT_ENABLED=true</code> to{" "}
-            <code className="text-xs">apps/api/.env</code>, then restart the API.
+            Copilot runs on the <strong>Modal API</strong>, not Vercel. Set{" "}
+            <code className="text-sky-300">GEMINI_API_KEY</code> and{" "}
+            <code className="text-sky-300">COPILOT_ENABLED=true</code> in your Modal secret{" "}
+            <code className="text-xs">aeroroute-secrets</code>, then redeploy with{" "}
+            <code className="text-xs">npm run deploy:api</code>.
           </p>
         </div>
       )}
