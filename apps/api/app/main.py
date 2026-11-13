@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
@@ -19,15 +20,20 @@ app = FastAPI(
     version="0.1.0",
 )
 
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=settings.cors_origins,
-    # Vercel preview + production deployments (belt-and-suspenders if client calls Modal directly)
-    allow_origin_regex=r"https://.*\.vercel\.app",
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+
+def cors_options() -> dict[str, Any]:
+    """CORS policy: exact origins from API_CORS_ORIGINS (plus an optional, project-specific regex)."""
+    return {
+        "allow_origins": settings.cors_origins,
+        "allow_origin_regex": settings.api_cors_origin_regex or None,
+        # Authentication uses the Authorization header, never cookies, so credentialed requests are not needed.
+        "allow_credentials": False,
+        "allow_methods": ["GET", "POST", "DELETE", "OPTIONS"],
+        "allow_headers": ["Authorization", "Content-Type", "X-User-Id"],
+    }
+
+
+app.add_middleware(CORSMiddleware, **cors_options())
 
 app.include_router(router)
 

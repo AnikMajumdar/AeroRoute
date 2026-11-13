@@ -46,6 +46,8 @@ class Settings(BaseSettings):
     gemini_model: str = "gemini-2.5-flash-lite"
     copilot_enabled: bool = False
     api_cors_origins: str = "http://localhost:3000"
+    # Optional extra allowed origins as a regex (e.g. this project's Vercel preview URLs); empty = exact list only.
+    api_cors_origin_regex: str = ""
     log_level: str = "INFO"
     app_env: str = "development"
 
