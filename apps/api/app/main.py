@@ -4,6 +4,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
+from app.auth import log_auth_configuration
 from app.config import settings
 from app.routers.routes import router
 
@@ -38,3 +39,4 @@ async def root() -> RedirectResponse:
 @app.on_event("startup")
 async def startup() -> None:
     logger.info("AeroRoute API starting up")
+    log_auth_configuration()
