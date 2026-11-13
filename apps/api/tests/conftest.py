@@ -14,10 +14,10 @@ def api(monkeypatch):
 
     from app.auth import get_current_user_id
     from app.main import app
-    from app.rate_limit import route_calculate_limiter
+    from app.rate_limit import reset_all_limiters
     from tests.fakes import FakeSupabase
 
-    route_calculate_limiter._hits.clear()
+    reset_all_limiters()
     db = FakeSupabase()
     monkeypatch.setattr("app.routers.routes.get_supabase", lambda: db)
     state = SimpleNamespace(user_id="user_A")
