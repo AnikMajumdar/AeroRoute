@@ -20,7 +20,7 @@
     "ml:train-delay": "cd apps/api && .venv/bin/python ml/train_delay_model.py",
     "ml:train-ete": "cd apps/api && .venv/bin/python ml/train_ete_model.py",
     "deploy:api": "cd apps/api && .venv/bin/python -m modal deploy modal_app.py",
-    "setup:api": "cd apps/api && python3 -m venv .venv && .venv/bin/pip install -r requirements.txt"
+    "setup:api": "cd apps/api && python3.11 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt"
   },
   "devDependencies": {
     "concurrently": "^9.1.2"

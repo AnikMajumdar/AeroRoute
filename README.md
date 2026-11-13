@@ -190,7 +190,7 @@ AeroRoute/
 ## Prerequisites
 
 - **Node.js** 20+
-- **Python** 3.11+ (3.9+ works for local dev; Modal uses 3.11)
+- **Python** 3.11 (see `.python-version`). Modal runs 3.11 and installs the hashed `apps/api/requirements.lock`; Python 3.9 is end-of-life and no longer supported
 - **Supabase** project with PostGIS enabled
 - **Clerk** application ([clerk.com](https://clerk.com))
 - **Google AI Studio** API key (optional, for copilot)
@@ -205,7 +205,13 @@ AeroRoute/
 git clone https://github.com/AnikMajumdar/AeroRoute.git
 cd AeroRoute
 npm install
-npm run setup:api    # creates apps/api/.venv and installs Python deps
+npm run setup:api    # creates apps/api/.venv (Python 3.11) and installs apps/api/requirements-dev.txt
+```
+
+Runtime dependencies live in `apps/api/requirements.txt`; test, ML-training and tooling packages live in `apps/api/requirements-dev.txt`. After changing runtime dependencies, regenerate the production lock file:
+
+```bash
+uv pip compile apps/api/requirements.txt --python-version 3.11 --universal --generate-hashes -o apps/api/requirements.lock
 ```
 
 ### 2. Configure environment
