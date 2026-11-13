@@ -80,26 +80,22 @@ def _models_to_try() -> list[str]:
 
 
 def _parse_gemini_error(response: httpx.Response) -> str:
+    """Map a Gemini error response to a message that is safe to show to end users (details go to the log)."""
     try:
-        body = response.json()
-        message = body.get("error", {}).get("message", "")
-        if response.status_code == 429:
-            if "limit: 0" in message or "quota" in message.lower():
-                return (
-                    "Gemini quota exceeded for the configured model. "
-                    "Try GEMINI_MODEL=gemini-2.5-flash-lite in apps/api/.env, "
-                    "or enable billing in Google AI Studio."
-                )
-            return "Gemini rate limit reached — please wait a moment and try again."
-        if response.status_code == 404:
-            return f"Gemini model not available: {message[:200]}"
-        if response.status_code in (401, 403):
-            return "Invalid Gemini API key. Check GEMINI_API_KEY in apps/api/.env."
-        if message:
-            return message[:300]
+        message = str(response.json().get("error", {}).get("message", ""))
     except Exception:
-        pass
-    return f"Gemini API error (HTTP {response.status_code})"
+        message = ""
+    logger.warning("Gemini API error HTTP %s: %s", response.status_code, message[:300])
+    status = response.status_code
+    if status == 429:
+        if "limit: 0" in message or "quota" in message.lower():
+            return "The AI service has reached its usage limit. Please try again later."
+        return "The AI service is busy. Please wait a moment and try again."
+    if status == 404:
+        return "The configured AI model is not available."
+    if status in (401, 403):
+        return "The AI service is not configured correctly."
+    return f"The AI service returned an error (HTTP {status})."
 
 
 def _faa_status_from_route_weather(route: dict[str, Any], role: str) -> dict[str, Any] | None:
@@ -265,12 +261,13 @@ def _extract_gemini_text(data: dict[str, Any]) -> str:
     candidates = data.get("candidates") or []
     if not candidates:
         block = data.get("promptFeedback", {})
-        raise RuntimeError(f"Gemini blocked response: {block}")
+        logger.warning("Gemini returned no candidates: %s", block)
+        raise RuntimeError("The AI service could not answer this question.")
     content = candidates[0].get("content") or {}
     parts = content.get("parts") or []
     text_parts = [p["text"] for p in parts if isinstance(p, dict) and p.get("text")]
     if not text_parts:
-        raise RuntimeError("Gemini returned empty response")
+        raise RuntimeError("The AI service returned an empty response.")
     return "\n".join(text_parts).strip()
 
 
@@ -363,9 +360,9 @@ async def answer_with_llm(
                     continue
             if last_error and last_error.response is not None:
                 raise RuntimeError(_parse_gemini_error(last_error.response)) from last_error
-            raise RuntimeError("All configured Gemini models failed")
+            raise RuntimeError("The AI service is currently unavailable.")
     except RuntimeError:
         raise
     except Exception as exc:
         logger.exception("Copilot LLM call failed: %s", exc)
-        raise RuntimeError("LLM service unavailable — check API logs") from exc
+        raise RuntimeError("The AI service is currently unavailable.") from exc
