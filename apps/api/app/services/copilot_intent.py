@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any, Literal
+
+logger = logging.getLogger(__name__)
+
 
 CopilotIntent = Literal[
     "route_explanation",
@@ -93,8 +97,9 @@ async def build_intent_context(
             tool_results[name] = result
             sources.append(result.get("source", name))
         except Exception as exc:
+            logger.warning("Copilot tool %s failed: %s", name, exc)
             tool_results[name] = {
-                "error": str(exc),
+                "error": "unavailable",
                 "source": name,
                 "note": "Tool data unavailable for this route.",
             }
@@ -106,7 +111,7 @@ async def build_intent_context(
     try:
         base = await get_route_context(supabase, route_id, user_id, include_full_segments=False)
     except Exception as exc:
-        raise RuntimeError(f"Could not load route context: {exc}") from exc
+        raise RuntimeError("Could not load route context") from exc
     slim = {
         "route_id": route_id,
         "intent": intent,

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import uuid
 from datetime import datetime, timezone
 from typing import Annotated, Any
 
@@ -557,15 +558,16 @@ async def calculate_route(
     except HTTPException:
         raise
     except Exception as exc:
-        logger.exception("Route calculation failed: %s", exc)
+        reference = uuid.uuid4().hex[:8]
+        logger.exception("Route calculation failed (reference %s)", reference)
         supabase.table("route_requests").update(
             {
                 "status": "failed",
-                "error_message": str(exc),
+                "error_message": f"{type(exc).__name__} (reference {reference})",
                 "updated_at": datetime.now(timezone.utc).isoformat(),
             }
         ).eq("id", route_request_id).execute()
-        raise HTTPException(status_code=500, detail=f"Route calculation failed: {exc}") from exc
+        raise HTTPException(status_code=500, detail=f"Route calculation failed (reference {reference})") from exc
 
 
 @router.get("/routes/{route_id}", response_model=RouteResultDetail)
@@ -801,10 +803,7 @@ async def copilot_chat(
     )
 
     if not is_copilot_available():
-        raise HTTPException(
-            status_code=503,
-            detail="AeroRoute Copilot is not enabled. Set COPILOT_ENABLED=true and GEMINI_API_KEY in apps/api/.env",
-        )
+        raise HTTPException(status_code=503, detail="AeroRoute Copilot is not enabled.")
 
     supabase = get_supabase()
 
@@ -814,7 +813,7 @@ async def copilot_chat(
         )
     except Exception as exc:
         logger.exception("Copilot context build failed for route %s: %s", route_id, exc)
-        raise HTTPException(status_code=500, detail=f"Could not load route context: {exc}") from exc
+        raise HTTPException(status_code=500, detail="Could not load route context") from exc
 
     try:
         answer, sources = await answer_with_llm(

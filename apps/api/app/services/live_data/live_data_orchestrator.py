@@ -80,7 +80,8 @@ class LiveDataOrchestrator:
         tafs: dict[str, Any] = {}
         for key, result in keyed.items():
             if isinstance(result, Exception):
-                warnings.append(f"{key}: {result}")
+                logger.warning("Live data provider %s failed: %s", key, result)
+                warnings.append(f"{key}: provider error")
                 continue
             if key.startswith("metar_"):
                 icao = key.split("_", 1)[1]
