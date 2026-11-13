@@ -184,14 +184,16 @@ export interface CopilotStatus {
   suggested_questions?: string[];
 }
 
-const IS_E2E = process.env.E2E_TEST_MODE === "true" || process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true";
-
 async function getRouteMaybeMock(
   id: string,
   userId: string,
   token?: string | null
 ): Promise<RouteResult> {
-  if (IS_E2E) {
+  // Local Playwright runs only; the condition is inlined so production builds drop the fixture chunk.
+  if (
+    (process.env.E2E_TEST_MODE === "true" || process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true") &&
+    process.env.NODE_ENV !== "production"
+  ) {
     const { E2E_ROUTE_ID, mockRouteResult } = await import("@/lib/e2eMockRoute");
     if (id === E2E_ROUTE_ID) {
       return mockRouteResult;

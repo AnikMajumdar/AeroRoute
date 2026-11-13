@@ -22,7 +22,9 @@ interface RouteCopilotProps {
 export function RouteCopilot({ routeId }: RouteCopilotProps) {
   const { userId, getToken } = useAuth();
   const e2eUserId =
-    process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true" ? "e2e-test-user" : null;
+    process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true" && process.env.NODE_ENV !== "production"
+      ? "e2e-test-user"
+      : null;
   const activeUserId = userId || e2eUserId;
 
   const [enabled, setEnabled] = useState<boolean | null>(null);
