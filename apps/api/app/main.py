@@ -6,9 +6,10 @@ from fastapi.responses import RedirectResponse
 
 from app.auth import log_auth_configuration
 from app.config import settings
+from app.logging_config import configure_logging
 from app.routers.routes import router
 
-logging.basicConfig(level=settings.log_level)
+configure_logging(settings.log_level)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(

@@ -289,8 +289,7 @@ async def _call_gemini_model(
 ) -> tuple[str, str]:
     response = await client.post(
         _gemini_generate_url(model),
-        params={"key": settings.gemini_api_key},
-        headers={"Content-Type": "application/json"},
+        headers={"Content-Type": "application/json", "x-goog-api-key": settings.gemini_api_key},
         json=payload,
     )
     if response.is_error:
