@@ -269,9 +269,10 @@ Open [http://localhost:3000](http://localhost:3000), sign in, and plan a route a
 |----------|----------|-------------|
 | `SUPABASE_URL` | **Yes** | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Service role key (backend only — never expose to frontend) |
-| `CLERK_SECRET_KEY` | **Yes** | Clerk secret key |
-| `CLERK_JWKS_URL` | Prod | Clerk JWKS URL for JWT validation |
-| `CLERK_ISSUER` | Prod | Clerk issuer URL |
+| `CLERK_JWKS_URL` | **Yes** (or `CLERK_PUBLISHABLE_KEY`) | Clerk JWKS URL; without it the API rejects authenticated requests with 503 |
+| `CLERK_PUBLISHABLE_KEY` | Alternative | Same value as the web app's publishable key; the JWKS URL is derived from it |
+| `CLERK_ISSUER` | No | When set, the token `iss` claim must match exactly (no trailing slash) |
+| `ALLOW_DEV_AUTH_HEADER` | No | Local development only: trust `X-User-Id` when no JWKS is available (ignored in production) |
 | `API_CORS_ORIGINS` | Prod | Comma-separated origins, e.g. `http://localhost:3000,https://your-app.vercel.app` |
 | `APP_ENV` | No | `development` or `production` |
 | `COPILOT_ENABLED` | Copilot | `true` to enable |
@@ -461,7 +462,7 @@ Note the deployed URL (e.g. `https://user--aeroroute-api-fastapi-app.modal.run`)
 
 ## Security
 
-- **Clerk JWT** validated via `CLERK_JWKS_URL` in production; `X-User-Id` header accepted in dev only
+- **Clerk JWT** verified against the instance JWKS (RS256, `exp`, `sub`, optional issuer). Without a JWKS the API fails closed (503); the `X-User-Id` header is honoured only with `ALLOW_DEV_AUTH_HEADER=true` outside production
 - **Supabase RLS** on user-owned data; API uses service role
 - **Rate limiting** on `POST /routes/calculate` — 10 requests/min per user (in-memory; use Redis for multi-instance)
 - **Secrets** — never commit `.env` files; never expose service role key or Gemini key in the frontend bundle
