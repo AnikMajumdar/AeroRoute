@@ -2,12 +2,13 @@ from __future__ import annotations
 
 import logging
 from datetime import datetime, timezone
-from typing import Any
+from typing import Annotated, Any
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from app.auth import get_current_user_id, row_to_airport
 from app.db import get_supabase
+from app.db_utils import fetch_one
 from app.geo.conus import CONUS_MAX_LAT, CONUS_MAX_LON, CONUS_MIN_LAT, CONUS_MIN_LON
 from app.geo.utils import path_from_waypoints
 from app.planning_constraints import (
@@ -17,6 +18,7 @@ from app.planning_constraints import (
 )
 from app.rate_limit import route_calculate_limiter
 from app.schemas import (
+    UUID_PATTERN,
     AircraftCreate,
     AircraftProfile,
     AirportSummary,
@@ -45,6 +47,9 @@ from app.services.route_loader import load_route_bundle
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
+
+# Malformed ids are rejected with 422 instead of reaching PostgREST (which answers with a database error).
+RouteId = Annotated[str, Path(pattern=UUID_PATTERN)]
 
 
 def _load_ml_predictions(supabase: Any, route_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -238,42 +243,27 @@ async def list_routes(user_id: str = Depends(get_current_user_id)) -> list[Route
 
     items: list[RouteListItem] = []
     for req in requests.data or []:
-        result = (
-            supabase.table("route_results")
-            .select("*")
-            .eq("route_request_id", req["id"])
-            .maybe_single()
-            .execute()
-        )
-        if not result.data:
+        result = fetch_one(supabase.table("route_results").select("*").eq("route_request_id", req["id"]))
+        if not result:
             continue
 
-        dep = (
-            supabase.table("airports")
-            .select("*")
-            .eq("id", req["departure_airport_id"])
-            .single()
-            .execute()
-        )
-        dest = (
-            supabase.table("airports")
-            .select("*")
-            .eq("id", req["destination_airport_id"])
-            .single()
-            .execute()
-        )
+        dep = fetch_one(supabase.table("airports").select("*").eq("id", req["departure_airport_id"]))
+        dest = fetch_one(supabase.table("airports").select("*").eq("id", req["destination_airport_id"]))
+        if not dep or not dest:
+            logger.warning("Skipping route %s in listing: airport row missing", result["id"])
+            continue
 
         items.append(
             RouteListItem(
-                id=result.data["id"],
+                id=result["id"],
                 route_request_id=req["id"],
                 status=req["status"],
-                departure_airport=AirportSummary(**row_to_airport(dep.data)),
-                destination_airport=AirportSummary(**row_to_airport(dest.data)),
-                primary_distance_nm=result.data["primary_distance_nm"],
-                primary_ete_minutes=result.data["primary_ete_minutes"],
-                primary_score=result.data["primary_score"],
-                created_at=result.data["created_at"],
+                departure_airport=AirportSummary(**row_to_airport(dep)),
+                destination_airport=AirportSummary(**row_to_airport(dest)),
+                primary_distance_nm=result["primary_distance_nm"],
+                primary_ete_minutes=result["primary_ete_minutes"],
+                primary_score=result["primary_score"],
+                created_at=result["created_at"],
             )
         )
     return items
@@ -292,43 +282,33 @@ async def calculate_route(
     if body.departure_airport_id == body.destination_airport_id:
         raise HTTPException(status_code=400, detail="Departure and destination must differ")
 
-    dep_result = (
-        supabase.table("airports").select("*").eq("id", body.departure_airport_id).maybe_single().execute()
-    )
-    dest_result = (
-        supabase.table("airports").select("*").eq("id", body.destination_airport_id).maybe_single().execute()
-    )
-    if not dep_result.data:
+    departure = fetch_one(supabase.table("airports").select("*").eq("id", body.departure_airport_id))
+    destination = fetch_one(supabase.table("airports").select("*").eq("id", body.destination_airport_id))
+    if not departure:
         raise HTTPException(status_code=404, detail="Departure airport not found")
-    if not dest_result.data:
+    if not destination:
         raise HTTPException(status_code=404, detail="Destination airport not found")
-    if not is_weather_eligible_airport(dep_result.data):
+    if not is_weather_eligible_airport(departure):
         raise HTTPException(
             status_code=400,
             detail="Departure airport is not supported (requires US ICAO medium/large airport with weather data)",
         )
-    if not is_weather_eligible_airport(dest_result.data):
+    if not is_weather_eligible_airport(destination):
         raise HTTPException(
             status_code=400,
             detail="Destination airport is not supported (requires US ICAO medium/large airport with weather data)",
         )
 
-    aircraft_result = (
-        supabase.table("aircraft_profiles")
-        .select("*")
-        .eq("id", body.aircraft_profile_id)
-        .maybe_single()
-        .execute()
-    )
-    if not aircraft_result.data:
+    aircraft = fetch_one(supabase.table("aircraft_profiles").select("*").eq("id", body.aircraft_profile_id))
+    if not aircraft:
         raise HTTPException(status_code=404, detail="Aircraft profile not found")
 
     logger.info(
         "route_calculation_started",
         extra={
             "user_id": user_id,
-            "departure": dep_result.data.get("icao_code"),
-            "destination": dest_result.data.get("icao_code"),
+            "departure": departure.get("icao_code"),
+            "destination": destination.get("icao_code"),
             "preference": body.route_preference,
         },
     )
@@ -373,9 +353,9 @@ async def calculate_route(
         ).data or []
 
         calc_result = await route_calculator.calculate(
-            departure=dep_result.data,
-            destination=dest_result.data,
-            aircraft=aircraft_result.data,
+            departure=departure,
+            destination=destination,
+            aircraft=aircraft,
             fuel_price=body.fuel_price_usd_per_gal,
             supabase=supabase,
             checkpoint_candidates=checkpoint_candidates,
@@ -486,7 +466,7 @@ async def calculate_route(
                 result_id,
                 request_row.data[0],
                 route_result_payload,
-                aircraft_result.data,
+                aircraft,
                 primary.segments,
                 calc_result["diversion_airports"],
             )
@@ -531,9 +511,9 @@ async def calculate_route(
             route_request_id,
             "completed",
             calc_result,
-            dep_result.data,
-            dest_result.data,
-            aircraft_result.data,
+            departure,
+            destination,
+            aircraft,
             diversion_details,
             result_row.data[0]["created_at"],
             body.route_preference,
@@ -555,66 +535,16 @@ async def calculate_route(
 
 @router.get("/routes/{route_id}", response_model=RouteResultDetail)
 async def get_route(
-    route_id: str,
+    route_id: RouteId,
     user_id: str = Depends(get_current_user_id),
 ) -> RouteResultDetail:
     supabase = get_supabase()
 
-    result = supabase.table("route_results").select("*").eq("id", route_id).maybe_single().execute()
-    if not result.data:
-        raise HTTPException(status_code=404, detail="Route not found")
-
-    request = (
-        supabase.table("route_requests")
-        .select("*")
-        .eq("id", result.data["route_request_id"])
-        .maybe_single()
-        .execute()
-    )
-    if not request.data or request.data["user_id"] != user_id:
-        raise HTTPException(status_code=404, detail="Route not found")
-
-    dep = supabase.table("airports").select("*").eq("id", request.data["departure_airport_id"]).single().execute()
-    dest = (
-        supabase.table("airports").select("*").eq("id", request.data["destination_airport_id"]).single().execute()
-    )
-    aircraft = (
-        supabase.table("aircraft_profiles")
-        .select("*")
-        .eq("id", request.data["aircraft_profile_id"])
-        .single()
-        .execute()
+    result, request, dep, dest, aircraft, segment_rows, diversion_details, _ = await load_route_bundle(
+        supabase, route_id, user_id
     )
 
-    segments_result = (
-        supabase.table("route_segments")
-        .select("*")
-        .eq("route_result_id", route_id)
-        .eq("route_variant", "primary")
-        .order("segment_index")
-        .execute()
-    )
-
-    diversions_result = (
-        supabase.table("diversion_airports")
-        .select("*, airports(*)")
-        .eq("route_result_id", route_id)
-        .order("rank")
-        .execute()
-    )
-
-    diversion_details = []
-    for div in diversions_result.data or []:
-        airport_data = div.get("airports") or {}
-        diversion_details.append(
-            {
-                "airport": row_to_airport(airport_data),
-                "distance_from_route_nm": div["distance_from_route_nm"],
-                "rank": div["rank"],
-            }
-        )
-
-    score_breakdown = result.data.get("normalized_score_breakdown") or result.data.get("score_breakdown")
+    score_breakdown = result.get("normalized_score_breakdown") or result.get("score_breakdown")
     delay_prediction, ete_prediction = _load_ml_predictions(supabase, route_id)
 
     live_snap = None
@@ -633,7 +563,6 @@ async def get_route(
     except Exception as exc:
         logger.debug("live_data_snapshots lookup skipped: %s", exc)
 
-    segment_rows = segments_result.data or []
     try:
         validated_segments = [RouteSegmentDetail(**row).model_dump() for row in segment_rows]
     except Exception as exc:
@@ -641,42 +570,42 @@ async def get_route(
         validated_segments = []
 
     return RouteResultDetail(
-        id=result.data["id"],
-        route_request_id=result.data["route_request_id"],
-        status=request.data["status"],
-        primary_distance_nm=result.data["primary_distance_nm"],
-        primary_ete_minutes=result.data["primary_ete_minutes"],
-        primary_fuel_burn_gal=result.data["primary_fuel_burn_gal"],
-        primary_fuel_cost_usd=result.data["primary_fuel_cost_usd"],
-        primary_score=result.data["primary_score"],
-        primary_path=result.data["primary_path"],
-        alternate_distance_nm=result.data.get("alternate_distance_nm"),
-        alternate_ete_minutes=result.data.get("alternate_ete_minutes"),
-        alternate_fuel_burn_gal=result.data.get("alternate_fuel_burn_gal"),
-        alternate_fuel_cost_usd=result.data.get("alternate_fuel_cost_usd"),
-        alternate_score=result.data.get("alternate_score"),
-        alternate_path=result.data.get("alternate_path"),
+        id=result["id"],
+        route_request_id=result["route_request_id"],
+        status=request["status"],
+        primary_distance_nm=result["primary_distance_nm"],
+        primary_ete_minutes=result["primary_ete_minutes"],
+        primary_fuel_burn_gal=result["primary_fuel_burn_gal"],
+        primary_fuel_cost_usd=result["primary_fuel_cost_usd"],
+        primary_score=result["primary_score"],
+        primary_path=result["primary_path"],
+        alternate_distance_nm=result.get("alternate_distance_nm"),
+        alternate_ete_minutes=result.get("alternate_ete_minutes"),
+        alternate_fuel_burn_gal=result.get("alternate_fuel_burn_gal"),
+        alternate_fuel_cost_usd=result.get("alternate_fuel_cost_usd"),
+        alternate_score=result.get("alternate_score"),
+        alternate_path=result.get("alternate_path"),
         score_breakdown=score_breakdown,
         normalized_score_breakdown=score_breakdown,
-        fuel_breakdown=result.data.get("fuel_breakdown"),
-        weather_checkpoints=result.data.get("weather_checkpoints") or [],
-        route_candidates=result.data.get("route_candidates") or [],
-        wind_data_quality=result.data.get("wind_data_quality"),
-        route_preference=request.data.get("route_preference"),
-        fuel_price_usd_per_gal=request.data.get("fuel_price_usd_per_gal"),
+        fuel_breakdown=result.get("fuel_breakdown"),
+        weather_checkpoints=result.get("weather_checkpoints") or [],
+        route_candidates=result.get("route_candidates") or [],
+        wind_data_quality=result.get("wind_data_quality"),
+        route_preference=request.get("route_preference"),
+        fuel_price_usd_per_gal=request.get("fuel_price_usd_per_gal"),
         delay_prediction=delay_prediction,
         ete_prediction=ete_prediction,
-        warnings=result.data.get("warnings") or [],
-        departure_weather=result.data.get("departure_weather"),
-        destination_weather=result.data.get("destination_weather"),
-        departure_status=_faa_status_from_weather(result.data.get("departure_weather")),
-        destination_status=_faa_status_from_weather(result.data.get("destination_weather")),
+        warnings=result.get("warnings") or [],
+        departure_weather=result.get("departure_weather"),
+        destination_weather=result.get("destination_weather"),
+        departure_status=_faa_status_from_weather(result.get("departure_weather")),
+        destination_status=_faa_status_from_weather(result.get("destination_weather")),
         segments=validated_segments,
         diversion_airports=diversion_details,
-        departure_airport=AirportSummary(**row_to_airport(dep.data)),
-        destination_airport=AirportSummary(**row_to_airport(dest.data)),
-        aircraft_profile=AircraftProfile(**aircraft.data),
-        created_at=result.data["created_at"],
+        departure_airport=AirportSummary(**row_to_airport(dep)),
+        destination_airport=AirportSummary(**row_to_airport(dest)),
+        aircraft_profile=AircraftProfile(**aircraft),
+        created_at=result["created_at"],
         live_data_snapshot=live_data_snapshot,
     )
 
@@ -697,7 +626,7 @@ def _load_live_snapshot(supabase: Any, route_id: str) -> dict[str, Any] | None:
 
 @router.post("/routes/{route_id}/live-data/refresh")
 async def refresh_live_data(
-    route_id: str,
+    route_id: RouteId,
     user_id: str = Depends(get_current_user_id),
 ) -> dict[str, Any]:
     """Refresh live TFR, hazard, and NOTAM snapshot without full recalculation."""
@@ -757,7 +686,7 @@ async def copilot_status() -> CopilotStatusResponse:
 
 @router.get("/routes/{route_id}/copilot/suggestions", response_model=CopilotStatusResponse)
 async def copilot_route_suggestions(
-    route_id: str,
+    route_id: RouteId,
     user_id: str = Depends(get_current_user_id),
 ) -> CopilotStatusResponse:
     from app.config import settings
@@ -774,7 +703,7 @@ async def copilot_route_suggestions(
 
 @router.post("/routes/{route_id}/brief/draft", response_model=RouteBriefResponse, status_code=201)
 async def draft_route_brief(
-    route_id: str,
+    route_id: RouteId,
     user_id: str = Depends(get_current_user_id),
 ) -> RouteBriefResponse:
     supabase = get_supabase()
@@ -815,7 +744,7 @@ async def draft_route_brief(
 
 @router.post("/routes/{route_id}/copilot/chat", response_model=CopilotChatResponse)
 async def copilot_chat(
-    route_id: str,
+    route_id: RouteId,
     body: CopilotChatRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> CopilotChatResponse:

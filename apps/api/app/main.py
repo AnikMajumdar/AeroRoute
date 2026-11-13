@@ -1,8 +1,9 @@
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import RedirectResponse
+from fastapi.responses import JSONResponse, RedirectResponse
+from postgrest.exceptions import APIError
 
 from app.auth import log_auth_configuration
 from app.config import settings
@@ -29,6 +30,13 @@ app.add_middleware(
 )
 
 app.include_router(router)
+
+
+@app.exception_handler(APIError)
+async def database_error_handler(request: Request, exc: APIError) -> JSONResponse:
+    """Unexpected PostgREST errors become a clean JSON 500; details stay in the logs."""
+    logger.error("Database error on %s %s: %s", request.method, request.url.path, exc)
+    return JSONResponse(status_code=500, content={"detail": "Database error"})
 
 
 @app.get("/", include_in_schema=False)

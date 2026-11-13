@@ -5,6 +5,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.auth import row_to_airport
+from app.db_utils import fetch_one
 
 
 async def load_route_bundle(
@@ -19,31 +20,19 @@ async def load_route_bundle(
     list[dict[str, Any]],
 ]:
     """Load route result and related rows; raise 404 if not found or not owned."""
-    result = supabase.table("route_results").select("*").eq("id", route_id).maybe_single().execute()
-    if not result.data:
+    result = fetch_one(supabase.table("route_results").select("*").eq("id", route_id))
+    if not result:
         raise HTTPException(status_code=404, detail="Route not found")
 
-    request = (
-        supabase.table("route_requests")
-        .select("*")
-        .eq("id", result.data["route_request_id"])
-        .maybe_single()
-        .execute()
-    )
-    if not request.data or request.data["user_id"] != user_id:
+    request = fetch_one(supabase.table("route_requests").select("*").eq("id", result["route_request_id"]))
+    if not request or request["user_id"] != user_id:
         raise HTTPException(status_code=404, detail="Route not found")
 
-    dep = supabase.table("airports").select("*").eq("id", request.data["departure_airport_id"]).single().execute()
-    dest = (
-        supabase.table("airports").select("*").eq("id", request.data["destination_airport_id"]).single().execute()
-    )
-    aircraft = (
-        supabase.table("aircraft_profiles")
-        .select("*")
-        .eq("id", request.data["aircraft_profile_id"])
-        .single()
-        .execute()
-    )
+    dep = fetch_one(supabase.table("airports").select("*").eq("id", request["departure_airport_id"]))
+    dest = fetch_one(supabase.table("airports").select("*").eq("id", request["destination_airport_id"]))
+    aircraft = fetch_one(supabase.table("aircraft_profiles").select("*").eq("id", request["aircraft_profile_id"]))
+    if not dep or not dest or not aircraft:
+        raise HTTPException(status_code=500, detail="Route data is incomplete")
     segments = (
         supabase.table("route_segments")
         .select("*")
@@ -80,11 +69,11 @@ async def load_route_bundle(
         )
 
     return (
-        result.data,
-        request.data,
-        dep.data,
-        dest.data,
-        aircraft.data,
+        result,
+        request,
+        dep,
+        dest,
+        aircraft,
         segments,
         diversions,
         alternate_segments,
