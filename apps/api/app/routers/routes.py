@@ -43,6 +43,7 @@ from app.services.route_brief import build_deterministic_brief
 from app.services.route_calculator import route_calculator
 from app.services.route_context_bundle import get_route_context
 from app.services.route_loader import load_route_bundle
+from app.utils.ttl_cache import MISSING, TTLCache
 
 logger = logging.getLogger(__name__)
 
@@ -50,6 +51,8 @@ router = APIRouter()
 
 # Malformed ids are rejected with 422 instead of reaching PostgREST (which answers with a database error).
 RouteId = Annotated[str, Path(pattern=UUID_PATTERN)]
+
+_PRESETS_CACHE = TTLCache(ttl_seconds=300, max_entries=4)
 
 
 def _load_ml_predictions(supabase: Any, route_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -199,11 +202,21 @@ async def search_airports(q: str = Query(min_length=1, max_length=50)) -> list[A
 
 @router.get("/aircraft/presets", response_model=list[AircraftProfile])
 async def get_aircraft_presets() -> list[AircraftProfile]:
+    cached = _PRESETS_CACHE.get("presets")
+    if cached is not MISSING:
+        return cached
+
     supabase = get_supabase()
-    rows = ensure_aircraft_presets(supabase)
+    rows = (
+        supabase.table("aircraft_profiles").select("*").eq("is_preset", True).order("name").execute()
+    ).data or []
+    if not rows:
+        rows = ensure_aircraft_presets(supabase)  # self-heal a database whose seed migration was skipped
     if not rows:
         raise HTTPException(status_code=503, detail="Aircraft presets unavailable")
-    return [AircraftProfile(**row) for row in rows]
+    profiles = [AircraftProfile(**row) for row in rows]
+    _PRESETS_CACHE.set("presets", profiles)
+    return profiles
 
 
 @router.post("/aircraft", response_model=AircraftProfile, status_code=201)
