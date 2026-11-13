@@ -33,6 +33,7 @@ from app.schemas import (
     RouteSegmentDetail,
 )
 from app.services.aircraft_presets import ensure_aircraft_presets
+from app.services.airport_search import build_search_filter, sanitize_search_term
 from app.services.copilot import (
     answer_with_llm,
     is_copilot_available,
@@ -53,6 +54,7 @@ router = APIRouter()
 RouteId = Annotated[str, Path(pattern=UUID_PATTERN)]
 
 _PRESETS_CACHE = TTLCache(ttl_seconds=300, max_entries=4)
+_AIRPORT_SEARCH_CACHE = TTLCache(ttl_seconds=60, max_entries=512)
 
 
 def _load_ml_predictions(supabase: Any, route_id: str) -> tuple[dict[str, Any] | None, dict[str, Any] | None]:
@@ -176,9 +178,14 @@ async def get_planning_constraints() -> dict[str, int | list[str]]:
 
 @router.get("/airports/search", response_model=list[AirportSummary])
 async def search_airports(q: str = Query(min_length=1, max_length=50)) -> list[AirportSummary]:
-    supabase = get_supabase()
-    query = q.strip().upper()
+    term = sanitize_search_term(q)
+    if not term:
+        return []
+    cached = _AIRPORT_SEARCH_CACHE.get(term)
+    if cached is not MISSING:
+        return cached
 
+    supabase = get_supabase()
     result = (
         supabase.table("airports")
         .select("*")
@@ -189,15 +196,15 @@ async def search_airports(q: str = Query(min_length=1, max_length=50)) -> list[A
         .not_.is_("icao_code", "null")
         .like("icao_code", "K%")
         .in_("airport_type", list(WEATHER_ELIGIBLE_TYPES))
-        .or_(
-            f"icao_code.ilike.%{query}%,iata_code.ilike.%{query}%,ident.ilike.%{query}%,name.ilike.%{query}%"
-        )
+        .or_(build_search_filter(term))
         .order("airport_type", desc=True)
         .limit(20)
         .execute()
     )
 
-    return [AirportSummary(**row_to_airport(row)) for row in (result.data or [])]
+    airports = [AirportSummary(**row_to_airport(row)) for row in (result.data or [])]
+    _AIRPORT_SEARCH_CACHE.set(term, airports)
+    return airports
 
 
 @router.get("/aircraft/presets", response_model=list[AircraftProfile])
