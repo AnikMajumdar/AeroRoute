@@ -14,18 +14,11 @@ import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { StatCard } from "@/components/ui/StatCard";
-import { E2E_ROUTE_ID, mockRouteResult } from "@/lib/e2eMockRoute";
-import {
-  RouteResult,
-  api,
-  formatCurrency,
-  formatDuration,
-  scoreColor,
-  windQualityLabel,
-} from "@/lib/api";
+import { RouteResult, api, formatCurrency, formatDuration, scoreColor, windQualityLabel } from "@/lib/api";
 import { readCachedRouteResult } from "@/lib/routeCache";
 
-const IS_E2E = process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true";
+// Local Playwright runs only; both conditions are inlined so production builds drop the fixture chunk entirely.
+const IS_E2E = process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true" && process.env.NODE_ENV !== "production";
 
 export function RouteResultPageClient({ routeId }: { routeId: string }) {
   const { userId, isLoaded, getToken } = useAuth();
@@ -43,10 +36,13 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
     setLoading(true);
     setError("");
 
-    if (IS_E2E && routeId === E2E_ROUTE_ID) {
-      setRoute(mockRouteResult);
-      setLoading(false);
-      return;
+    if (process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true" && process.env.NODE_ENV !== "production") {
+      const { E2E_ROUTE_ID, mockRouteResult } = await import("@/lib/e2eMockRoute");
+      if (routeId === E2E_ROUTE_ID) {
+        setRoute(mockRouteResult);
+        setLoading(false);
+        return;
+      }
     }
 
     const cached = readCachedRouteResult(routeId);

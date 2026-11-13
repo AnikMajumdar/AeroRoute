@@ -8,7 +8,9 @@ export default async function RouteResultPage({
   params: Promise<{ id: string }>;
 }) {
   const { userId } = await auth();
-  const e2eUserId = process.env.E2E_TEST_MODE === "true" ? "e2e-test-user" : null;
+  // Local Playwright runs only; never honoured in production builds.
+  const e2eUserId =
+    process.env.E2E_TEST_MODE === "true" && process.env.NODE_ENV !== "production" ? "e2e-test-user" : null;
   if (!userId && !e2eUserId) redirect("/");
 
   const { id } = await params;
