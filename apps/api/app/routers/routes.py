@@ -16,7 +16,14 @@ from app.planning_constraints import (
     WEATHER_ELIGIBLE_TYPES,
     is_weather_eligible_airport,
 )
-from app.rate_limit import route_calculate_limiter
+from app.rate_limit import (
+    aircraft_create_limiter,
+    brief_draft_limiter,
+    copilot_chat_limiter,
+    live_data_refresh_limiter,
+    rate_limited,
+    route_calculate_limiter,
+)
 from app.schemas import (
     UUID_PATTERN,
     AircraftCreate,
@@ -226,7 +233,12 @@ async def get_aircraft_presets() -> list[AircraftProfile]:
     return profiles
 
 
-@router.post("/aircraft", response_model=AircraftProfile, status_code=201)
+@router.post(
+    "/aircraft",
+    response_model=AircraftProfile,
+    status_code=201,
+    dependencies=[Depends(rate_limited(aircraft_create_limiter))],
+)
 async def create_aircraft(
     body: AircraftCreate,
     user_id: str = Depends(get_current_user_id),
@@ -289,14 +301,16 @@ async def list_routes(user_id: str = Depends(get_current_user_id)) -> list[Route
     return items
 
 
-@router.post("/routes/calculate", response_model=RouteResultDetail, status_code=201)
+@router.post(
+    "/routes/calculate",
+    response_model=RouteResultDetail,
+    status_code=201,
+    dependencies=[Depends(rate_limited(route_calculate_limiter))],
+)
 async def calculate_route(
     body: RouteCalculateRequest,
     user_id: str = Depends(get_current_user_id),
 ) -> RouteResultDetail:
-    if not route_calculate_limiter.check(user_id):
-        raise HTTPException(status_code=429, detail="Rate limit exceeded — try again shortly")
-
     supabase = get_supabase()
 
     if body.departure_airport_id == body.destination_airport_id:
@@ -645,7 +659,10 @@ def _load_live_snapshot(supabase: Any, route_id: str) -> dict[str, Any] | None:
     return None
 
 
-@router.post("/routes/{route_id}/live-data/refresh")
+@router.post(
+    "/routes/{route_id}/live-data/refresh",
+    dependencies=[Depends(rate_limited(live_data_refresh_limiter))],
+)
 async def refresh_live_data(
     route_id: RouteId,
     user_id: str = Depends(get_current_user_id),
@@ -722,7 +739,12 @@ async def copilot_route_suggestions(
     )
 
 
-@router.post("/routes/{route_id}/brief/draft", response_model=RouteBriefResponse, status_code=201)
+@router.post(
+    "/routes/{route_id}/brief/draft",
+    response_model=RouteBriefResponse,
+    status_code=201,
+    dependencies=[Depends(rate_limited(brief_draft_limiter))],
+)
 async def draft_route_brief(
     route_id: RouteId,
     user_id: str = Depends(get_current_user_id),
@@ -763,7 +785,11 @@ async def draft_route_brief(
     )
 
 
-@router.post("/routes/{route_id}/copilot/chat", response_model=CopilotChatResponse)
+@router.post(
+    "/routes/{route_id}/copilot/chat",
+    response_model=CopilotChatResponse,
+    dependencies=[Depends(rate_limited(copilot_chat_limiter))],
+)
 async def copilot_chat(
     route_id: RouteId,
     body: CopilotChatRequest,
