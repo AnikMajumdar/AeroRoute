@@ -9,6 +9,8 @@ from app.planning_constraints import FORECAST_HORIZON_DAYS
 
 RoutePreference = Literal["balanced", "fastest", "fuel_saver", "weather_cautious"]
 
+UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
 
 class AirportSummary(BaseModel):
     id: str
@@ -45,9 +47,9 @@ class AircraftCreate(BaseModel):
 
 
 class RouteCalculateRequest(BaseModel):
-    departure_airport_id: str
-    destination_airport_id: str
-    aircraft_profile_id: str
+    departure_airport_id: str = Field(pattern=UUID_PATTERN)
+    destination_airport_id: str = Field(pattern=UUID_PATTERN)
+    aircraft_profile_id: str = Field(pattern=UUID_PATTERN)
     departure_time: datetime
     fuel_price_usd_per_gal: float = Field(gt=0, le=50)
     route_preference: RoutePreference = "balanced"
