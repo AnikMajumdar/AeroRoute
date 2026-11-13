@@ -182,7 +182,7 @@ AeroRoute/
 ├── data/
 │   ├── raw/                    # OurAirports CSV (~85K airports)
 │   └── ml/                     # Exported Parquet training data
-└── supabase/migrations/        # 001–008 SQL migrations
+└── supabase/migrations/        # 001–009 SQL migrations
 ```
 
 ---
@@ -225,7 +225,7 @@ Fill in Supabase and Clerk keys (see [Environment Variables](#environment-variab
 
 ### 3. Apply migrations and import airports
 
-In the Supabase SQL editor, run migrations **001 through 008** in order (`supabase/migrations/`).
+In the Supabase SQL editor, run migrations **001 through 009** in order (`supabase/migrations/`).
 
 Then import airport data:
 
@@ -304,11 +304,12 @@ Apply in order via Supabase SQL editor:
 | `001_initial_schema.sql` | Core tables: airports, aircraft, routes, segments, diversions |
 | `002_update_aircraft_presets.sql` | Aircraft performance fields |
 | `003_phase2_accuracy.sql` | Wind altitude columns on segments |
-| `004_rls_policies.sql` | Row-level security |
+| `004_rls_policies.sql` | Row-level security for route requests, results and briefs |
 | `005_faa_status_on_results.sql` | FAA status on results |
 | `006_ml_pipeline.sql` | ML training samples and predictions |
 | `007_fix_diversion_postgis.sql` | PostGIS diversion corridor fix |
 | `008_live_data.sql` | Live data snapshots (TFR/NOTAM/hazard storage) |
+| `009_rls_all_tables.sql` | Row-level security on every remaining table (airports, aircraft profiles, segments, diversions, caches, ML tables) |
 
 **Key tables:**
 
@@ -451,7 +452,7 @@ Note the deployed URL (e.g. `https://user--aeroroute-api-fastapi-app.modal.run`)
 
 ### Production checklist
 
-- [ ] Supabase migrations 001–008 applied
+- [ ] Supabase migrations 001–009 applied
 - [ ] Airports imported (`npm run import:airports`)
 - [ ] Modal secret configured and API deployed
 - [ ] Vercel env vars set (especially `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`)
@@ -464,7 +465,7 @@ Note the deployed URL (e.g. `https://user--aeroroute-api-fastapi-app.modal.run`)
 ## Security
 
 - **Clerk JWT** verified against the instance JWKS (RS256, `exp`, `sub`, optional issuer). Without a JWKS the API fails closed (503); the `X-User-Id` header is honoured only with `ALLOW_DEV_AUTH_HEADER=true` outside production
-- **Supabase RLS** on user-owned data; API uses service role
+- **Supabase RLS** enabled on every table (migrations 004, 008, 009): users see only their own aircraft and route data, reference data is read-only, caches and ML tables are service-role only. The API uses the service role, which bypasses RLS, and enforces ownership in application code
 - **Rate limiting** on `POST /routes/calculate` — 10 requests/min per user (in-memory; use Redis for multi-instance)
 - **Secrets** — never commit `.env` files; never expose service role key or Gemini key in the frontend bundle
 - **Copilot guardrails** — system prompt forbids inventing NOTAMs, weather, or operational approval language
