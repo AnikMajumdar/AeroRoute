@@ -300,7 +300,8 @@ async def calculate_route(
         )
 
     aircraft = fetch_one(supabase.table("aircraft_profiles").select("*").eq("id", body.aircraft_profile_id))
-    if not aircraft:
+    # Presets are shared; custom profiles belong to their creator (404 so other users' ids are not revealed).
+    if not aircraft or not (aircraft.get("is_preset") or aircraft.get("user_id") == user_id):
         raise HTTPException(status_code=404, detail="Aircraft profile not found")
 
     logger.info(
