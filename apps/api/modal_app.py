@@ -11,7 +11,7 @@ API_ROOT = Path(__file__).resolve().parent
 
 image = (
     modal.Image.debian_slim(python_version="3.11")
-    .pip_install_from_requirements(str(API_ROOT / "requirements.txt"))
+    .pip_install_from_requirements(str(API_ROOT / "requirements.lock"))
     .add_local_dir(str(API_ROOT / "app"), remote_path="/root/app")
     .add_local_dir(str(API_ROOT / "ml"), remote_path="/root/ml")
 )
