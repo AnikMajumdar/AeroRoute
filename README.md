@@ -274,6 +274,7 @@ Open [http://localhost:3000](http://localhost:3000), sign in, and plan a route a
 | `CLERK_ISSUER` | No | When set, the token `iss` claim must match exactly (no trailing slash) |
 | `ALLOW_DEV_AUTH_HEADER` | No | Local development only: trust `X-User-Id` when no JWKS is available (ignored in production) |
 | `API_CORS_ORIGINS` | Prod | Comma-separated origins, e.g. `http://localhost:3000,https://your-app.vercel.app` |
+| `API_CORS_ORIGIN_REGEX` | No | Optional regex for extra origins (e.g. this project's Vercel preview URLs). No wildcard such as `*.vercel.app` is allowed by default |
 | `APP_ENV` | No | `development` or `production` |
 | `COPILOT_ENABLED` | Copilot | `true` to enable |
 | `GEMINI_API_KEY` | Copilot | Google AI Studio key |
