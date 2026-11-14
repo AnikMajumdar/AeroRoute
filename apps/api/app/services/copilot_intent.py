@@ -4,6 +4,8 @@ import logging
 import re
 from typing import Any, Literal
 
+from fastapi import HTTPException
+
 logger = logging.getLogger(__name__)
 
 
@@ -66,8 +68,19 @@ async def build_intent_context(
     question: str,
 ) -> tuple[CopilotIntent, dict[str, Any], list[str]]:
     from app.services import copilot_tools
+    from app.services.route_context_bundle import get_route_context
 
     intent = classify_copilot_intent(question)
+
+    # Resolve the route before running any tool: an unknown or foreign route must answer 404 (not 500),
+    # and none of the tools (some refresh data or recalculate) may run for it.
+    try:
+        base = await get_route_context(supabase, route_id, user_id, include_full_segments=False)
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise RuntimeError("Could not load route context") from exc
+
     tool_names = INTENT_TOOLS[intent]
     sources: list[str] = []
     tool_results: dict[str, Any] = {"intent": intent}
@@ -106,12 +119,6 @@ async def build_intent_context(
             sources.append(name)
 
     # Slim base context always included
-    from app.services.route_context_bundle import get_route_context
-
-    try:
-        base = await get_route_context(supabase, route_id, user_id, include_full_segments=False)
-    except Exception as exc:
-        raise RuntimeError("Could not load route context") from exc
     slim = {
         "route_id": route_id,
         "intent": intent,

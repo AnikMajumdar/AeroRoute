@@ -811,6 +811,8 @@ async def copilot_chat(
         intent, context, sources_used = await build_intent_context(
             supabase, route_id, user_id, body.question
         )
+    except HTTPException:
+        raise
     except Exception as exc:
         logger.exception("Copilot context build failed for route %s: %s", route_id, exc)
         raise HTTPException(status_code=500, detail="Could not load route context") from exc
