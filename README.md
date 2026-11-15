@@ -313,7 +313,7 @@ Apply in order via Supabase SQL editor:
 
 **Key tables:**
 
-- `airports` — coordinates, PostGIS `geom`, runway length
+- `airports` — coordinates, PostGIS `geom`, length of the longest **open, paved** runway (closed runways, water lanes and turf/gravel/dirt strips are ignored by the importer; airports without such a runway store `NULL`)
 - `aircraft_profiles` — cruise speed, fuel burn, altitude, climb/descent/reserve
 - `route_requests` / `route_results` — user routes, metrics, paths, scores
 - `route_segments` — per-leg winds, groundspeed, ETE
