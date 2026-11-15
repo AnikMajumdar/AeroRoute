@@ -120,4 +120,5 @@ def live_data_warnings(snapshot: LiveDataSnapshot | dict[str, Any]) -> list[str]
         FAA_MSG,
     ]
     warnings.extend(data.get("warnings") or [])
-    return warnings
+    # The providers repeat the same "not connected" messages; show each one once.
+    return list(dict.fromkeys(warnings))
