@@ -2,6 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
+_CATEGORIES_BY_ORD = ["VFR", "MVFR", "IFR", "LIFR"]
+
+
+def _category_from_ord(value: int) -> str:
+    """Flight category for an ordinal; negative values mean 'unknown' (not the last list entry)."""
+    if value < 0:
+        return "UNKNOWN"
+    return _CATEGORIES_BY_ORD[min(value, len(_CATEGORIES_BY_ORD) - 1)]
+
 
 def predict_delay_risk(features: dict[str, Any]) -> dict[str, Any]:
     """
@@ -24,9 +33,9 @@ def predict_delay_risk(features: dict[str, Any]) -> dict[str, Any]:
         or "VFR"
     )
     if isinstance(dep_cat, int):
-        dep_cat = ["VFR", "MVFR", "IFR", "LIFR"][min(dep_cat, 3)]
+        dep_cat = _category_from_ord(dep_cat)
     if isinstance(dest_cat, int):
-        dest_cat = ["VFR", "MVFR", "IFR", "LIFR"][min(dest_cat, 3)]
+        dest_cat = _category_from_ord(dest_cat)
     dep_cat = str(dep_cat).upper()
     dest_cat = str(dest_cat).upper()
 
