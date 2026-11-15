@@ -449,7 +449,7 @@ class RouteCalculatorService:
             "alternate": alternate,
             "variants": variants,
             "candidate_summaries": candidate_summaries,
-            "warnings": warnings,
+            "warnings": list(dict.fromkeys(warnings)),
             "departure_weather": {"metar": dep_weather, "taf": dep_taf, "faa_status": dep_status},
             "destination_weather": {"metar": dest_weather, "taf": dest_taf, "faa_status": dest_status},
             "diversion_airports": diversion_airports,
