@@ -103,8 +103,8 @@ When a user submits **Calculate Route** (`POST /routes/calculate`):
 3. Persist     route_requests row (status: processing)
 4. Generate    Up to 5 route candidates in parallel:
                  • Direct great-circle
-                 • North offset (~35 NM)
-                 • South offset (~35 NM)
+                 • Left offset (~35 NM, left of the direction of travel)
+                 • Right offset (~35 NM, right of the direction of travel)
                  • Via best diversion airport (PostGIS corridor)
                  • Via best-weather en-route checkpoint
 5. Winds       Open-Meteo GFS per segment at cruise pressure level (or surface fallback)
