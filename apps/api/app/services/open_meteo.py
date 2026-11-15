@@ -30,6 +30,27 @@ AVAILABLE_LEVELS_HPA = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200]
 OPEN_METEO_FORECAST_DAYS = FORECAST_HORIZON_DAYS + 1
 
 
+def wind_quality_from_segments(segments: list[dict[str, Any]]) -> str:
+    """Classify how the legs of a route were wind-sampled.
+
+    ``pressure_level`` / ``surface_fallback``: every leg has wind from that source.
+    ``mixed``: every leg has wind, from both sources.
+    ``partial``: some legs have no wind at all (they are planned with zero wind).
+    ``unavailable``: no leg has wind data.
+    """
+    sources = [segment.get("wind_source") for segment in segments]
+    sampled = {source for source in sources if source}
+    if not sampled:
+        return "unavailable"
+    if not all(sources):
+        return "partial"
+    if sampled == {"pressure_level"}:
+        return "pressure_level"
+    if sampled == {"surface_fallback"}:
+        return "surface_fallback"
+    return "mixed"
+
+
 class OpenMeteoClient:
     def __init__(self) -> None:
         self.timeout = httpx.Timeout(15.0, connect=5.0)
@@ -153,8 +174,6 @@ class OpenMeteoClient:
     ) -> tuple[list[dict[str, Any]], str]:
         """Fetch wind data for each leg; returns segments and overall wind_data_quality."""
         segments: list[dict[str, Any]] = []
-        used_fallback = False
-        used_pressure = False
 
         leg_params: list[tuple[int, float, float, float, float, float]] = []
         for i in range(len(waypoints) - 1):
@@ -181,10 +200,6 @@ class OpenMeteoClient:
                 signed_hw, headwind, tailwind = wind_components_kt(
                     wind["wind_speed_kt"], wind["wind_direction_deg"], bearing
                 )
-                if wind.get("wind_source") == "surface_fallback":
-                    used_fallback = True
-                else:
-                    used_pressure = True
 
             segments.append(
                 {
@@ -204,15 +219,7 @@ class OpenMeteoClient:
                 }
             )
 
-        if used_fallback and not used_pressure:
-            quality = "surface_fallback"
-        elif used_fallback:
-            quality = "mixed"
-        elif used_pressure:
-            quality = "pressure_level"
-        else:
-            quality = "unavailable"
-        return segments, quality
+        return segments, wind_quality_from_segments(segments)
 
 
 open_meteo_client = OpenMeteoClient()

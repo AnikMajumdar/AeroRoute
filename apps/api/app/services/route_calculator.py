@@ -18,7 +18,7 @@ from app.services.diversion_postgis import find_diversion_airports_postgis
 from app.services.ml_features import extract_delay_features, extract_ete_features
 from app.services.faa_nas import faa_nas_client
 from app.services.fuel_model import calculate_fuel_breakdown
-from app.services.open_meteo import open_meteo_client
+from app.services.open_meteo import open_meteo_client, wind_quality_from_segments
 from app.services.route_scoring import ScoringInput, calculate_normalized_score
 from app.services.weather_checkpoints import (
     best_weather_checkpoint,
@@ -82,6 +82,39 @@ def _build_route_variants(
         )
 
     return variants
+
+
+def wind_quality_warnings(segments: list[dict[str, Any]]) -> list[str]:
+    """Plain-language warnings when a route's winds are missing or degraded.
+
+    Legs without wind data are planned with zero wind, which must never happen silently.
+    """
+    sources = [segment.get("wind_source") for segment in segments]
+    total = len(sources)
+    missing = sum(1 for source in sources if not source)
+    fallback = sources.count("surface_fallback")
+    warnings: list[str] = []
+    if total == 0 or missing == total:
+        warnings.append(
+            "Wind data unavailable — ETE and fuel assume still air (zero wind). "
+            "Check winds aloft before relying on these numbers."
+        )
+        return warnings
+    if missing:
+        warnings.append(
+            f"Wind data unavailable for {missing} of {total} legs — those legs assume zero wind "
+            "(educational estimate only)"
+        )
+    if fallback == total - missing:
+        warnings.append(
+            "Cruise-altitude winds unavailable — using surface wind fallback (educational estimate only)"
+        )
+    elif fallback:
+        warnings.append(
+            f"Cruise-altitude winds unavailable for {fallback} of {total} legs — "
+            "using surface wind for those legs (educational estimate only)"
+        )
+    return warnings
 
 
 async def _compute_variant_metrics(
@@ -318,23 +351,14 @@ class RouteCalculatorService:
             for vname, waypoints in variant_defs
         ]
         variants = list(await asyncio.gather(*variant_tasks))
-        wind_quality = "unavailable"
-        for variant in variants:
-            if variant.segments:
-                sources = {s.get("wind_source") for s in variant.segments if s.get("wind_source")}
-                if "surface_fallback" in sources:
-                    wind_quality = "mixed" if "pressure_level" in sources else "surface_fallback"
-                elif "pressure_level" in sources:
-                    wind_quality = "pressure_level"
-
-        if wind_quality == "surface_fallback":
-            warnings.append(
-                "Cruise-altitude winds unavailable — using surface wind fallback (educational estimate only)"
-            )
 
         variants.sort(key=lambda v: v.score, reverse=True)
         primary = variants[0]
         alternate = variants[1] if len(variants) > 1 else None
+
+        # The stored quality and the warnings describe the winds of the route that is actually returned.
+        wind_quality = wind_quality_from_segments(primary.segments)
+        warnings.extend(wind_quality_warnings(primary.segments))
 
         route_path = [{"lat": lat, "lon": lon} for lat, lon in primary.waypoints]
         checkpoint_icaos = [c.get("icao") for c in checkpoint_weather if c.get("icao")]
