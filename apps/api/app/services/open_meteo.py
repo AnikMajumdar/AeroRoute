@@ -24,31 +24,35 @@ OPEN_METEO_BASE = "https://api.open-meteo.com/v1/forecast"
 # Pressure levels supported by Open-Meteo standard forecast API
 AVAILABLE_LEVELS_HPA = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200]
 
+# Open-Meteo returns whole UTC days starting today at 00:00. A departure may be up to FORECAST_HORIZON_DAYS
+# from now, which falls on day number FORECAST_HORIZON_DAYS (counting today as day 0), so one more day than
+# the horizon has to be requested to cover the whole allowed departure window.
+OPEN_METEO_FORECAST_DAYS = FORECAST_HORIZON_DAYS + 1
+
 
 class OpenMeteoClient:
     def __init__(self) -> None:
         self.timeout = httpx.Timeout(15.0, connect=5.0)
 
     @staticmethod
-    def _hour_index(times: list[str], forecast_time: datetime | None) -> int:
-        if not times:
-            return 0
-        if forecast_time is None:
-            return 0
-        target = forecast_time.astimezone(timezone.utc).replace(minute=0, second=0, microsecond=0)
-        parsed = []
-        for raw in times:
+    def _hour_index(times: list[str], forecast_time: datetime | None) -> int | None:
+        """Index of the first forecast hour at or after ``forecast_time`` (rounded down to the hour; now if omitted).
+
+        Returns None when the time lies after the last returned hour, so the caller reports the wind as
+        unavailable instead of silently using a different hour.
+        """
+        target = (forecast_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        target = target.replace(minute=0, second=0, microsecond=0)
+        for idx, raw in enumerate(times):
             try:
                 dt = datetime.fromisoformat(raw.replace("Z", "+00:00"))
-                if dt.tzinfo is None:
-                    dt = dt.replace(tzinfo=timezone.utc)
-                parsed.append(dt)
             except ValueError:
-                parsed.append(None)
-        for idx, dt in enumerate(parsed):
-            if dt and dt >= target:
+                continue
+            if dt.tzinfo is None:
+                dt = dt.replace(tzinfo=timezone.utc)
+            if dt >= target:
                 return idx
-        return min(len(times) - 1, 0)
+        return None
 
     def _pressure_level_hourly_vars(self, level_hpa: int) -> str:
         return f"windspeed_{level_hpa}hPa,winddirection_{level_hpa}hPa"
@@ -61,8 +65,8 @@ class OpenMeteoClient:
         forecast_time: datetime | None = None,
     ) -> dict[str, Any] | None:
         level_hpa, wind_altitude_ft = cruise_altitude_to_pressure_level_hpa(cruise_altitude_ft)
-        time_key = forecast_time.isoformat() if forecast_time else "now"
-        cache_key = f"wind:{lat:.2f}:{lon:.2f}:{level_hpa}:{time_key[:13]}"
+        effective_time = (forecast_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
+        cache_key = f"wind:{lat:.2f}:{lon:.2f}:{level_hpa}:{effective_time:%Y-%m-%dT%H}"
         cached = cache_service.get(cache_key)
         if cached is not None:
             return cached
@@ -77,7 +81,7 @@ class OpenMeteoClient:
                         "longitude": lon,
                         "hourly": f"{hourly_vars},windspeed_10m,winddirection_10m",
                         "windspeed_unit": "kn",
-                        "forecast_days": FORECAST_HORIZON_DAYS,
+                        "forecast_days": OPEN_METEO_FORECAST_DAYS,
                         "timezone": "UTC",
                     },
                 )
@@ -86,6 +90,15 @@ class OpenMeteoClient:
                 hourly = data.get("hourly", {})
                 times = hourly.get("time", [])
                 idx = self._hour_index(times, forecast_time)
+                if idx is None:
+                    logger.warning(
+                        "Open-Meteo forecast for %s,%s does not cover %s (last hour %s)",
+                        lat,
+                        lon,
+                        effective_time.isoformat(),
+                        times[-1] if times else None,
+                    )
+                    return None
 
                 speed_key = f"windspeed_{level_hpa}hPa"
                 dir_key = f"winddirection_{level_hpa}hPa"
