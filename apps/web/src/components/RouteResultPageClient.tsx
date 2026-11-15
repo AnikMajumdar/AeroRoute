@@ -4,7 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { PageLayout } from "@/components/Layout";
-import { RouteCopilot } from "@/components/RouteCopilot";
+import { RouteCopilot, CopilotPrefill } from "@/components/RouteCopilot";
 import { RouteMap } from "@/components/RouteMap";
 import { LiveRestrictionsCard } from "@/components/LiveRestrictionsCard";
 import { HazardsCard } from "@/components/HazardsCard";
@@ -29,6 +29,7 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
   const [route, setRoute] = useState<RouteResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [copilotPrefill, setCopilotPrefill] = useState<CopilotPrefill | null>(null);
 
   const loadRoute = useCallback(async () => {
     if (!activeUserId) return;
@@ -145,7 +146,7 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
       )}
 
       <div className="mb-6">
-        <LiveDataActions routeId={route.id} userId={activeUserId!} />
+        <LiveDataActions onAskCopilot={(text) => setCopilotPrefill({ text })} />
       </div>
 
       <div className="mb-8 grid gap-8 lg:grid-cols-5">
@@ -406,7 +407,7 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
         </Card>
       )}
 
-      <RouteCopilot routeId={routeId} />
+      <RouteCopilot routeId={routeId} prefill={copilotPrefill} />
 
       <SafetyDisclaimer className="mt-8" />
     </PageLayout>
