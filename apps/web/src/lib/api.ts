@@ -347,6 +347,8 @@ export function windQualityLabel(quality?: string): string {
       return "Surface wind fallback";
     case "mixed":
       return "Mixed cruise/surface winds";
+    case "partial":
+      return "Partial wind data";
     default:
       return "Wind data unavailable";
   }
