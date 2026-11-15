@@ -139,10 +139,14 @@ def _primary_candidate_type(route: dict[str, Any]) -> str:
 def _candidate_type_ord(name: str) -> int:
     order = {
         "direct": 0,
-        "north_offset": 1,
-        "south_offset": 2,
+        "left_offset": 1,
+        "right_offset": 2,
         "via_diversion": 3,
         "via_weather_checkpoint": 4,
+        # Names stored (and used for the training data) before offsets were labelled by side of track:
+        # "north_offset" was always the left-of-track candidate, "south_offset" the right-of-track one.
+        "north_offset": 1,
+        "south_offset": 2,
     }
     return order.get(name, 0)
 

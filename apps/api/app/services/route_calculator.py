@@ -58,13 +58,15 @@ def _build_route_variants(
     mid_dist = haversine_nm(dep_lat, dep_lon, dest_lat, dest_lon) / 2
     mid_lat, mid_lon = destination_point(dep_lat, dep_lon, bearing, mid_dist)
 
-    north_mid = destination_point(mid_lat, mid_lon, (bearing + 270) % 360, OFFSET_NM)
-    south_mid = destination_point(mid_lat, mid_lon, (bearing + 90) % 360, OFFSET_NM)
+    # Offsets are defined relative to the direction of travel; labelling them "north"/"south" was wrong
+    # on westbound routes (and meaningless on north/south routes).
+    left_mid = destination_point(mid_lat, mid_lon, (bearing + 270) % 360, OFFSET_NM)
+    right_mid = destination_point(mid_lat, mid_lon, (bearing + 90) % 360, OFFSET_NM)
 
     variants: list[tuple[str, list[tuple[float, float]]]] = [
         ("direct", direct),
-        ("north_offset", [(dep_lat, dep_lon), north_mid, (dest_lat, dest_lon)]),
-        ("south_offset", [(dep_lat, dep_lon), south_mid, (dest_lat, dest_lon)]),
+        ("left_offset", [(dep_lat, dep_lon), left_mid, (dest_lat, dest_lon)]),
+        ("right_offset", [(dep_lat, dep_lon), right_mid, (dest_lat, dest_lon)]),
     ]
 
     if diversion_airport:
