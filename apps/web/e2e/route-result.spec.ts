@@ -87,6 +87,18 @@ test.describe("Route result page", () => {
     await page.goto(`/routes/${E2E_ROUTE_ID}`);
     await expect(page.getByText(/not certified flight-planning/i).first()).toBeVisible();
   });
+
+  test("Ask Copilot about hazards brings an offline copilot into view without errors", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+
+    await page.goto(`/routes/${E2E_ROUTE_ID}`);
+    await page.getByTestId("ask-copilot-hazards").click();
+
+    await expect(page.getByTestId("route-copilot")).toBeInViewport();
+    await expect(page.getByTestId("copilot-input")).toHaveCount(0);
+    expect(pageErrors).toEqual([]);
+  });
 });
 
 test.describe("Route result copilot (enabled mock)", () => {
@@ -128,5 +140,71 @@ test.describe("Route result copilot (enabled mock)", () => {
     await expect(response).toBeVisible();
     await expect(response.getByText(/82\/100/)).toBeVisible();
     await expect(response.getByText(/not certified flight-planning/i)).toBeVisible();
+  });
+
+  test("Ask Copilot about hazards fills the input and the question can be submitted", async ({ page }) => {
+    let askedQuestion = "";
+
+    await page.route("**/copilot/status", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ enabled: true, model: "gpt-4o-mini" }),
+      });
+    });
+
+    await page.route(`**/routes/${E2E_ROUTE_ID}/copilot/chat`, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      askedQuestion = route.request().postDataJSON().question;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          answer: "No live weather or restriction data is connected for this route.",
+          sources_used: ["route_results"],
+          safety_note: "Educational tool only — not certified flight-planning software.",
+        }),
+      });
+    });
+
+    await page.goto(`/routes/${E2E_ROUTE_ID}`);
+    await expect(page.getByTestId("route-copilot").getByText("Online")).toBeVisible();
+
+    await page.getByTestId("ask-copilot-hazards").click();
+
+    // The text must reach React state: the input shows it, is focused, and Ask is enabled.
+    const input = page.getByTestId("copilot-input");
+    await expect(input).toHaveValue(/What weather and restriction data is available/);
+    await expect(input).toBeFocused();
+    await expect(page.getByTestId("copilot-submit")).toBeEnabled();
+
+    await page.getByTestId("copilot-submit").click();
+
+    await expect(page.getByTestId("copilot-response")).toBeVisible();
+    expect(askedQuestion).toContain("live FAA and aviation weather APIs are not connected");
+  });
+
+  test("Ask Copilot about hazards can be used repeatedly", async ({ page }) => {
+    await page.route("**/copilot/status", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ enabled: true, model: "gpt-4o-mini" }),
+      });
+    });
+
+    await page.goto(`/routes/${E2E_ROUTE_ID}`);
+    await expect(page.getByTestId("route-copilot").getByText("Online")).toBeVisible();
+
+    const input = page.getByTestId("copilot-input");
+    await page.getByTestId("ask-copilot-hazards").click();
+    await expect(input).toHaveValue(/What weather and restriction data/);
+
+    await input.fill("something else");
+    await page.getByTestId("ask-copilot-hazards").click();
+    await expect(input).toHaveValue(/What weather and restriction data/);
   });
 });
