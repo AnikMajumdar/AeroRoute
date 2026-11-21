@@ -30,6 +30,61 @@ logger = logging.getLogger(__name__)
 
 OFFSET_NM = 35.0
 
+# Average speed while climbing / descending as a fraction of cruise speed (light piston and turboprop typical).
+CLIMB_SPEED_FACTOR = 0.7
+DESCENT_SPEED_FACTOR = 0.9
+
+
+@dataclass(frozen=True)
+class FlightPhases:
+    """Climb flown from the start of a route and descent flown up to its end; the rest is cruise."""
+
+    climb_minutes: float
+    descent_minutes: float
+    climb_nm: float
+    descent_nm: float
+
+    def climb_minutes_for(self, nm: float) -> float:
+        return self.climb_minutes * nm / self.climb_nm if self.climb_nm > 0 else 0.0
+
+    def descent_minutes_for(self, nm: float) -> float:
+        return self.descent_minutes * nm / self.descent_nm if self.descent_nm > 0 else 0.0
+
+
+def plan_phases(distance_nm: float, aircraft: dict[str, Any]) -> FlightPhases:
+    """Time and distance of the climb and descent; both shrink proportionally on routes too short to reach cruise."""
+    cruise_speed = float(aircraft["cruise_speed_kt"])
+    climb_min = float(aircraft.get("climb_time_min") or 12)
+    descent_min = float(aircraft.get("descent_time_min") or 8)
+    climb_nm = climb_min / 60.0 * cruise_speed * CLIMB_SPEED_FACTOR
+    descent_nm = descent_min / 60.0 * cruise_speed * DESCENT_SPEED_FACTOR
+    covered = climb_nm + descent_nm
+    scale = min(1.0, distance_nm / covered) if covered > 0 else 1.0
+    return FlightPhases(climb_min * scale, descent_min * scale, climb_nm * scale, descent_nm * scale)
+
+
+def split_leg_distances(
+    leg_distances: list[float], climb_nm: float, descent_nm: float
+) -> list[tuple[float, float, float]]:
+    """(climb, cruise, descent) distance of every leg: the climb is flown first, the descent last."""
+    climb = [0.0] * len(leg_distances)
+    descent = [0.0] * len(leg_distances)
+    remaining = climb_nm
+    for i, dist in enumerate(leg_distances):
+        if remaining <= 0:
+            break
+        climb[i] = min(dist, remaining)
+        remaining -= climb[i]
+    remaining = descent_nm
+    for i in reversed(range(len(leg_distances))):
+        if remaining <= 0:
+            break
+        descent[i] = min(leg_distances[i] - climb[i], remaining)
+        remaining -= descent[i]
+    return [
+        (climb[i], max(0.0, leg_distances[i] - climb[i] - descent[i]), descent[i]) for i in range(len(leg_distances))
+    ]
+
 
 @dataclass
 class RouteVariant:
@@ -129,10 +184,14 @@ async def _compute_variant_metrics(
     cruise_speed_kt = int(aircraft["cruise_speed_kt"])
     fuel_burn_gph = float(aircraft["fuel_burn_gph"])
     cruise_altitude_ft = int(aircraft.get("cruise_altitude_ft") or 10000)
-    climb_time = float(aircraft.get("climb_time_min") or 12)
-    descent_time = float(aircraft.get("descent_time_min") or 8)
 
-    total_distance = 0.0
+    leg_distances = [
+        haversine_nm(waypoints[i][0], waypoints[i][1], waypoints[i + 1][0], waypoints[i + 1][1])
+        for i in range(len(waypoints) - 1)
+    ]
+    total_distance = sum(leg_distances)
+    phases = plan_phases(total_distance, aircraft)
+    leg_phases = split_leg_distances(leg_distances, phases.climb_nm, phases.descent_nm)
     cruise_ete = 0.0
     segments: list[dict[str, Any]] = []
 
@@ -143,15 +202,17 @@ async def _compute_variant_metrics(
     for i in range(len(waypoints) - 1):
         lat1, lon1 = waypoints[i]
         lat2, lon2 = waypoints[i + 1]
-        leg_dist = haversine_nm(lat1, lon1, lat2, lon2)
+        leg_dist = leg_distances[i]
+        climb_nm, cruise_nm, descent_nm = leg_phases[i]
         bearing = initial_bearing_deg(lat1, lon1, lat2, lon2)
-        total_distance += leg_dist
 
         wind_data = wind_segments[i] if i < len(wind_segments) else {}
         signed_hw = wind_data.get("headwind_component_kt") or 0.0
-        groundspeed = max(60.0, cruise_speed_kt - signed_hw)
-        leg_ete = (leg_dist / groundspeed) * 60 if groundspeed > 0 else 0
-        cruise_ete += leg_ete
+        cruise_groundspeed = max(60.0, cruise_speed_kt - signed_hw)
+        leg_cruise_ete = (cruise_nm / cruise_groundspeed) * 60
+        cruise_ete += leg_cruise_ete
+        leg_ete = leg_cruise_ete + phases.climb_minutes_for(climb_nm) + phases.descent_minutes_for(descent_nm)
+        groundspeed = leg_dist / leg_ete * 60 if leg_ete > 0 else cruise_groundspeed
 
         hw_stored = max(0.0, signed_hw) if wind_data.get("wind_speed_kt") is not None else None
         tw_stored = max(0.0, -signed_hw) if wind_data.get("wind_speed_kt") is not None else None
@@ -177,9 +238,12 @@ async def _compute_variant_metrics(
             }
         )
 
-    total_ete = cruise_ete + climb_time + descent_time
+    total_ete = cruise_ete + phases.climb_minutes + phases.descent_minutes
     fuel_breakdown = calculate_fuel_breakdown(
-        aircraft, cruise_ete_minutes=cruise_ete, climb_ete_minutes=climb_time, descent_ete_minutes=descent_time
+        aircraft,
+        cruise_ete_minutes=cruise_ete,
+        climb_ete_minutes=phases.climb_minutes,
+        descent_ete_minutes=phases.descent_minutes,
     )
     fuel_burn = fuel_breakdown.trip_fuel_gal
     fuel_cost = fuel_breakdown.total_required_gal * fuel_price
@@ -272,11 +336,15 @@ class RouteCalculatorService:
         dest_status = dest_status or {}
 
         direct_dist = haversine_nm(dep_lat, dep_lon, dest_lat, dest_lon)
-        climb_time = float(aircraft.get("climb_time_min") or 12)
-        descent_time = float(aircraft.get("descent_time_min") or 8)
-        baseline_cruise_ete = (direct_dist / cruise) * 60
-        baseline_ete = baseline_cruise_ete + climb_time + descent_time
-        baseline_fuel = calculate_fuel_breakdown(aircraft, cruise_ete_minutes=baseline_cruise_ete).total_required_gal
+        baseline_phases = plan_phases(direct_dist, aircraft)
+        baseline_cruise_ete = (direct_dist - baseline_phases.climb_nm - baseline_phases.descent_nm) / cruise * 60
+        baseline_ete = baseline_cruise_ete + baseline_phases.climb_minutes + baseline_phases.descent_minutes
+        baseline_fuel = calculate_fuel_breakdown(
+            aircraft,
+            cruise_ete_minutes=baseline_cruise_ete,
+            climb_ete_minutes=baseline_phases.climb_minutes,
+            descent_ete_minutes=baseline_phases.descent_minutes,
+        ).total_required_gal
 
         direct_waypoints = [(dep_lat, dep_lon), (dest_lat, dest_lon)]
 
