@@ -289,7 +289,7 @@ def install_pressure_winds(monkeypatch: Any, headwind_kt: float = 0.0, crosswind
     from app.services import route_calculator as calculator_module
     from app.services.open_meteo import wind_quality_from_segments
 
-    async def winds(waypoints, cruise_altitude_ft=10000, forecast_time=None):
+    async def winds(waypoints, cruise_altitude_ft=10000, forecast_time=None, **_kwargs):
         segments = [
             {
                 "segment_index": i,

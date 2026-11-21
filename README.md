@@ -116,7 +116,7 @@ When a user submits **Calculate Route** (`POST /routes/calculate`):
 11. Return     Full route result → frontend navigates to /routes/{id}
 ```
 
-**Wind model:** Cruise altitude maps to the nearest GFS pressure level (1000–200 hPa). Segment winds are sampled at leg midpoints. Groundspeed = cruise speed − headwind + tailwind.
+**Wind model:** Cruise altitude maps to the nearest GFS pressure level (1000–200 hPa). Every leg is cut into parts of at most 200 NM and the wind is sampled at the great-circle midpoint of each part, for the forecast hour in which the aircraft is expected there (coordinates are snapped to the 0.25° forecast grid and cached, so a long route costs roughly one Open-Meteo request per 200 NM and candidate). Groundspeed of a part = √(TAS² − crosswind²) − headwind; the climb and descent are flown in still air.
 
 **Fuel model (educational):**
 

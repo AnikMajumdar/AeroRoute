@@ -3,13 +3,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import math
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from typing import Any
 
 import httpx
 
 from app.config import settings
-from app.geo.utils import initial_bearing_deg
+from app.geo.utils import destination_point, haversine_nm, initial_bearing_deg
 from app.planning_constraints import FORECAST_HORIZON_DAYS
 from app.services.cache import cache_service
 from app.services.wind_altitude import (
@@ -29,6 +29,18 @@ AVAILABLE_LEVELS_HPA = [1000, 925, 850, 700, 600, 500, 400, 300, 250, 200]
 # from now, which falls on day number FORECAST_HORIZON_DAYS (counting today as day 0), so one more day than
 # the horizon has to be requested to cover the whole allowed departure window.
 OPEN_METEO_FORECAST_DAYS = FORECAST_HORIZON_DAYS + 1
+
+# A leg is cut into parts of at most this length and the wind is sampled once per part (it used to be one sample
+# per leg, e.g. a single sample for 2,000 NM); the cap bounds the number of Open-Meteo requests for very long legs.
+WIND_SAMPLE_SPACING_NM = 200.0
+MAX_WIND_SAMPLES_PER_LEG = 20
+
+# The forecast grid is 0.25 degrees; snapping requests to it lets nearby points, routes and users share one request.
+WIND_GRID_DEG = 0.25
+
+
+def _snap_to_grid(value: float) -> float:
+    return round(value / WIND_GRID_DEG) * WIND_GRID_DEG
 
 
 def wind_quality_from_segments(segments: list[dict[str, Any]]) -> str:
@@ -50,6 +62,16 @@ def wind_quality_from_segments(segments: list[dict[str, Any]]) -> str:
     if sampled == {"surface_fallback"}:
         return "surface_fallback"
     return "mixed"
+
+
+def _mean_wind(winds: list[dict[str, Any]]) -> tuple[float, float]:
+    """Vector-mean (speed, direction the wind blows from) of several winds."""
+    u = sum(-w["wind_speed_kt"] * math.sin(math.radians(w["wind_direction_deg"])) for w in winds) / len(winds)
+    v = sum(-w["wind_speed_kt"] * math.cos(math.radians(w["wind_direction_deg"])) for w in winds) / len(winds)
+    speed = math.hypot(u, v)
+    if speed < 1e-9:
+        return 0.0, float(winds[0]["wind_direction_deg"])
+    return speed, (math.degrees(math.atan2(-u, -v)) + 360.0) % 360.0
 
 
 class OpenMeteoClient:
@@ -87,6 +109,7 @@ class OpenMeteoClient:
         forecast_time: datetime | None = None,
     ) -> dict[str, Any] | None:
         level_hpa, wind_altitude_ft = cruise_altitude_to_pressure_level_hpa(cruise_altitude_ft)
+        lat, lon = _snap_to_grid(lat), _snap_to_grid(lon)
         effective_time = (forecast_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
         cache_key = f"wind:{lat:.2f}:{lon:.2f}:{level_hpa}:{effective_time:%Y-%m-%dT%H}"
         cached = cache_service.get(cache_key)
@@ -172,58 +195,116 @@ class OpenMeteoClient:
         waypoints: list[tuple[float, float]],
         cruise_altitude_ft: int = 10000,
         forecast_time: datetime | None = None,
+        cruise_speed_kt: float | None = None,
+        spacing_nm: float = WIND_SAMPLE_SPACING_NM,
     ) -> tuple[list[dict[str, Any]], str]:
-        """Fetch wind data for each leg; returns segments and overall wind_data_quality."""
-        segments: list[dict[str, Any]] = []
+        """Sample the winds along every leg; returns one summary per leg and the overall wind_data_quality.
 
-        leg_params: list[tuple[int, float, float, float, float, float]] = []
+        A leg is cut into equal parts of at most ``spacing_nm``. The wind is fetched at the great-circle midpoint of
+        each part, for the time the aircraft is expected to be there (``forecast_time`` plus the distance flown at
+        ``cruise_speed_kt``). The leg summary holds the mean wind; ``samples`` (not stored) keeps the per-part
+        components so the groundspeed can be computed part by part.
+        """
+        legs: list[dict[str, Any]] = []
+        tasks = []
+        flown_nm = 0.0
         for i in range(len(waypoints) - 1):
             lat1, lon1 = waypoints[i]
             lat2, lon2 = waypoints[i + 1]
-            mid_lat = (lat1 + lat2) / 2
-            mid_lon = (lon1 + lon2) / 2
+            leg_nm = haversine_nm(lat1, lon1, lat2, lon2)
             bearing = initial_bearing_deg(lat1, lon1, lat2, lon2)
-            leg_params.append((i, lat1, lon1, lat2, lon2, mid_lat, mid_lon, bearing))
-
-        wind_tasks = [
-            self.get_wind_at_point(
-                p[5], p[6], cruise_altitude_ft=cruise_altitude_ft, forecast_time=forecast_time
-            )
-            for p in leg_params
-        ]
-        winds = await asyncio.gather(*wind_tasks)
-
-        for (i, lat1, lon1, lat2, lon2, _mid_lat, _mid_lon, bearing), wind in zip(leg_params, winds):
-            signed_hw = None
-            headwind = None
-            tailwind = None
-            crosswind = None
-            if wind:
-                signed_hw, headwind, tailwind = wind_components_kt(
-                    wind["wind_speed_kt"], wind["wind_direction_deg"], bearing
+            count = max(1, min(MAX_WIND_SAMPLES_PER_LEG, math.ceil(leg_nm / spacing_nm)))
+            part_nm = leg_nm / count
+            parts = []
+            for k in range(count):
+                mid_nm = (k + 0.5) * part_nm
+                lat, lon = destination_point(lat1, lon1, bearing, mid_nm) if leg_nm > 0 else (lat1, lon1)
+                when = forecast_time
+                if forecast_time is not None and cruise_speed_kt:
+                    when = forecast_time + timedelta(hours=(flown_nm + mid_nm) / cruise_speed_kt)
+                parts.append({"start_nm": k * part_nm, "end_nm": (k + 1) * part_nm, "lat": lat, "lon": lon})
+                tasks.append(
+                    self.get_wind_at_point(lat, lon, cruise_altitude_ft=cruise_altitude_ft, forecast_time=when)
                 )
-                crosswind = crosswind_component_kt(wind["wind_speed_kt"], wind["wind_direction_deg"], bearing)
+            legs.append({"index": i, "start": (lat1, lon1), "end": (lat2, lon2), "bearing": bearing, "parts": parts})
+            flown_nm += leg_nm
 
-            segments.append(
+        results = list(await asyncio.gather(*tasks))
+        segments: list[dict[str, Any]] = []
+        for leg in legs:
+            winds, results = results[: len(leg["parts"])], results[len(leg["parts"]) :]
+            segments.append(self._summarise_leg(leg, winds))
+        return segments, wind_quality_from_segments(segments)
+
+    @staticmethod
+    def _summarise_leg(leg: dict[str, Any], winds: list[dict[str, Any] | None]) -> dict[str, Any]:
+        (lat1, lon1), (lat2, lon2) = leg["start"], leg["end"]
+        summary: dict[str, Any] = {
+            "segment_index": leg["index"],
+            "start_lat": lat1,
+            "start_lon": lon1,
+            "end_lat": lat2,
+            "end_lon": lon2,
+            "bearing_deg": leg["bearing"],
+            "wind_speed_kt": None,
+            "wind_direction_deg": None,
+            "headwind_component_kt": None,
+            "tailwind_component_kt": None,
+            "crosswind_component_kt": None,
+            "wind_altitude_ft": None,
+            "wind_pressure_level_hpa": None,
+            "wind_source": None,
+        }
+        available = [(k, wind) for k, wind in enumerate(winds) if wind]
+        if len(available) < len(winds):
+            logger.warning(
+                "Wind unavailable for %d of %d samples on leg %d", len(winds) - len(available), len(winds), leg["index"]
+            )
+        if not available:
+            return summary
+
+        components: dict[int, tuple[float, float]] = {}
+        for k, wind in available:
+            part = leg["parts"][k]
+            track = initial_bearing_deg(part["lat"], part["lon"], lat2, lon2)
+            signed, _, _ = wind_components_kt(wind["wind_speed_kt"], wind["wind_direction_deg"], track)
+            components[k] = (signed, crosswind_component_kt(wind["wind_speed_kt"], wind["wind_direction_deg"], track))
+        mean_headwind = sum(c[0] for c in components.values()) / len(components)
+        mean_crosswind = sum(c[1] for c in components.values()) / len(components)
+
+        # Parts whose wind could not be fetched take the average of the others so the whole leg is covered.
+        samples = []
+        for k, part in enumerate(leg["parts"]):
+            headwind, crosswind = components.get(k, (mean_headwind, mean_crosswind))
+            samples.append(
                 {
-                    "segment_index": i,
-                    "start_lat": lat1,
-                    "start_lon": lon1,
-                    "end_lat": lat2,
-                    "end_lon": lon2,
-                    "bearing_deg": bearing,
-                    "wind_speed_kt": wind["wind_speed_kt"] if wind else None,
-                    "wind_direction_deg": wind["wind_direction_deg"] if wind else None,
-                    "headwind_component_kt": round(signed_hw, 2) if signed_hw is not None else None,
-                    "tailwind_component_kt": round(tailwind, 2) if tailwind is not None else None,
-                    "crosswind_component_kt": round(crosswind, 2) if crosswind is not None else None,
-                    "wind_altitude_ft": wind.get("wind_altitude_ft") if wind else None,
-                    "wind_pressure_level_hpa": wind.get("wind_pressure_level_hpa") if wind else None,
-                    "wind_source": wind.get("wind_source") if wind else None,
+                    "start_nm": part["start_nm"],
+                    "end_nm": part["end_nm"],
+                    "headwind_component_kt": headwind,
+                    "crosswind_component_kt": crosswind,
                 }
             )
 
-        return segments, wind_quality_from_segments(segments)
+        speed, direction = _mean_wind([wind for _, wind in available])
+        first = available[0][1]
+        summary.update(
+            {
+                "wind_speed_kt": speed,
+                "wind_direction_deg": direction,
+                "headwind_component_kt": round(mean_headwind, 2),
+                "tailwind_component_kt": round(max(0.0, -mean_headwind), 2),
+                "crosswind_component_kt": round(mean_crosswind, 2),
+                "wind_altitude_ft": first.get("wind_altitude_ft"),
+                "wind_pressure_level_hpa": first.get("wind_pressure_level_hpa"),
+                "wind_source": (
+                    "surface_fallback"
+                    if any(wind.get("wind_source") == "surface_fallback" for _, wind in available)
+                    else "pressure_level"
+                ),
+                "samples": samples,
+            }
+        )
+        return summary
 
 
 open_meteo_client = OpenMeteoClient()
