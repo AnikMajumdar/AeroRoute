@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import math
+
 # Standard atmosphere approximations: pressure level (hPa) -> altitude (ft MSL)
 PRESSURE_LEVELS_HPA: list[tuple[int, int]] = [
     (1000, 0),
@@ -45,3 +47,15 @@ def wind_components_kt(
     headwind = max(0.0, signed)
     tailwind = max(0.0, -signed)
     return signed, headwind, tailwind
+
+
+def crosswind_component_kt(wind_speed_kt: float, wind_direction_deg: float, track_bearing_deg: float) -> float:
+    """Magnitude of the wind component perpendicular to the track."""
+    return abs(wind_speed_kt * math.sin(math.radians(wind_direction_deg - track_bearing_deg)))
+
+
+def groundspeed_kt(true_airspeed_kt: float, headwind_kt: float, crosswind_kt: float = 0.0) -> float:
+    """Groundspeed along the track after crabbing into a crosswind (0 when the aircraft cannot hold the track)."""
+    if abs(crosswind_kt) >= true_airspeed_kt:
+        return 0.0
+    return math.sqrt(true_airspeed_kt**2 - crosswind_kt**2) - headwind_kt
