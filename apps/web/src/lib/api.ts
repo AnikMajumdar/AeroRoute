@@ -155,6 +155,8 @@ export interface RouteResult {
   diversion_airports?: {
     airport: Airport;
     distance_from_route_nm: number;
+    /** NM from the departure to the point of the route abeam of the airport. */
+    distance_along_route_nm?: number | null;
     rank: number;
   }[];
   departure_airport?: Airport;

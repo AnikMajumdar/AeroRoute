@@ -6,6 +6,7 @@ from fastapi import HTTPException
 
 from app.auth import row_to_airport
 from app.db_utils import fetch_one
+from app.services.diversion_postgis import along_route_nm
 
 
 async def load_route_bundle(
@@ -60,10 +61,13 @@ async def load_route_bundle(
     )
     diversions = []
     for div in diversions_result.data or []:
+        airport = row_to_airport(div.get("airports") or {})
         diversions.append(
             {
-                "airport": row_to_airport(div.get("airports") or {}),
+                "airport": airport,
                 "distance_from_route_nm": div["distance_from_route_nm"],
+                # not stored: derived from the coordinates (where the airport is abeam of the route)
+                "distance_along_route_nm": along_route_nm(dep, dest, airport),
                 "rank": div.get("rank"),
             }
         )

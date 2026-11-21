@@ -88,6 +88,7 @@ export const mockRouteResult: RouteResult = {
         longest_runway_ft: 11489,
       },
       distance_from_route_nm: 35.2,
+      distance_along_route_nm: 1612.4,
       rank: 1,
     },
   ],

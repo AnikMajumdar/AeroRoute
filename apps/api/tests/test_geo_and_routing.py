@@ -12,7 +12,6 @@ from app.geo.utils import (
 from app.services.faa_nas_parser import parse_faa_airport_status
 from app.services.fuel_model import calculate_fuel_breakdown
 from app.services.open_meteo import OpenMeteoClient
-from app.services.route_calculator import find_diversion_airports
 from app.services.route_scoring import ScoringInput, calculate_normalized_score
 from app.services.weather_checkpoints import WEATHER_CATEGORY_PENALTY
 from app.services.wind_altitude import (
@@ -179,36 +178,3 @@ class TestFAAParser:
         status = parse_faa_airport_status("KJFK", {"groundStop": True})
         assert status.ground_stop is True
         assert status.status == "ground_stop"
-
-
-class TestDiversionAirports:
-    def _make_airport(self, id_, lat, lon, runway=5000, apt_type="medium_airport"):
-        return {
-            "id": id_,
-            "ident": id_,
-            "latitude": lat,
-            "longitude": lon,
-            "longest_runway_ft": runway,
-            "airport_type": apt_type,
-        }
-
-    def test_finds_airports_in_corridor(self):
-        route = [(40.0, -74.0), (34.0, -118.0)]
-        bearing = initial_bearing_deg(40.0, -74.0, 34.0, -118.0)
-        half_dist = haversine_nm(40.0, -74.0, 34.0, -118.0) / 2
-        mid_lat, mid_lon = destination_point(40.0, -74.0, bearing, half_dist)
-        div_lat, div_lon = destination_point(mid_lat, mid_lon, (bearing + 90) % 360, 35)
-
-        airports = [
-            self._make_airport("dep", 40.0, -74.0),
-            self._make_airport("dest", 34.0, -118.0),
-            self._make_airport("div1", div_lat, div_lon, runway=6000),
-            self._make_airport("too_close", mid_lat, mid_lon, runway=6000),
-            self._make_airport("short_runway", div_lat + 0.5, div_lon, runway=2000),
-        ]
-        results = find_diversion_airports(route, airports, "dep", "dest")
-        ids = [r["airport"]["id"] for r in results]
-        assert "div1" in ids
-        assert "too_close" not in ids
-        assert "short_runway" not in ids
-        assert "dep" not in ids

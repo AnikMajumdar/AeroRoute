@@ -35,7 +35,7 @@
 - **Wind-aware performance** — Open-Meteo GFS pressure-level winds at cruise altitude
 - **Fuel model** — climb, cruise, descent, reserve (educational POH-style estimates)
 - **Route scoring** — normalized 0–100 composite with preference modes (balanced, fastest, fuel saver, weather cautious)
-- **Diversion search** — PostGIS corridor query ranked by distance and runway length
+- **Diversion search** — PostGIS query for suitable airports abeam of the route (within 150 NM, none behind the departure or beyond the destination, no minimum distance), closest to the track first and spread over the route's length
 - **ML predictions** — delay risk (logistic regression) and ETE (random forest surrogate)
 - **AeroRoute Copilot** — Gemini-powered, route-scoped RAG with intent routing and tool grounding
 - **Interactive map** — Leaflet map with primary/alternate paths, diversions, checkpoints
@@ -105,7 +105,7 @@ When a user submits **Calculate Route** (`POST /routes/calculate`):
                  • Direct great-circle
                  • Left offset (~35 NM, left of the direction of travel)
                  • Right offset (~35 NM, right of the direction of travel)
-                 • Via best diversion airport (PostGIS corridor)
+                 • Via a diversion airport 15-75 NM off the track, nearest the middle of the route
                  • Via best-weather en-route checkpoint (only when a checkpoint has known weather)
 5. Winds       Open-Meteo GFS per segment at cruise pressure level (or surface fallback)
 6. Performance ETE, fuel (climb + cruise + descent + reserve), cost
@@ -315,6 +315,7 @@ Apply in order via Supabase SQL editor:
 | `008_live_data.sql` | Live data snapshots (TFR/NOTAM/hazard storage) |
 | `009_rls_all_tables.sql` | Row-level security on every remaining table (airports, aircraft profiles, segments, diversions, caches, ML tables) |
 | `010_aircraft_presets_usable_fuel.sql` | Usable fuel capacity (range check) and the canonical preset aircraft values |
+| `011_diversion_airports_abeam.sql` | Diversion search returns only airports abeam of the route |
 
 **Key tables:**
 

@@ -98,6 +98,8 @@ class RouteSegmentDetail(BaseModel):
 class DiversionAirportDetail(BaseModel):
     airport: AirportSummary
     distance_from_route_nm: float
+    # where the airport is abeam of the route, NM from the departure
+    distance_along_route_nm: float | None = None
     rank: int
 
 
