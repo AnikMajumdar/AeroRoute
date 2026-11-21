@@ -106,6 +106,7 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
   const dep = route.departure_airport;
   const dest = route.destination_airport;
   const scoreBreakdown = route.normalized_score_breakdown || route.score_breakdown;
+  const unavailableComponents = scoreBreakdown?.unavailable_components ?? [];
   const fuel = route.fuel_breakdown;
   const liveData = route.live_data_snapshot as
     | {
@@ -219,6 +220,11 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
               {scoreBreakdown.composite_score.toFixed(0)}/100
             </span>
           </p>
+          {unavailableComponents.length > 0 && (
+            <p className="mb-5 text-xs text-amber-200/80" data-testid="score-unavailable-note">
+              No data for {joinNames(unavailableComponents)} — left out of the composite, not counted as good or bad.
+            </p>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {Object.entries(scoreBreakdown.component_scores).map(([key, value]) => (
               <ScoreBar key={key} label={key} value={value} />
@@ -451,18 +457,31 @@ function RouteComparisonCard({
   );
 }
 
-function ScoreBar({ label, value }: { label: string; value: number }) {
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function ScoreBar({ label, value }: { label: string; value: number | null }) {
   return (
     <div>
       <div className="mb-1 flex justify-between text-xs">
         <span className="capitalize text-muted">{label.replace(/_/g, " ")}</span>
-        <span className={scoreColor(value)}>{value.toFixed(0)}</span>
+        {value == null ? (
+          <span className="text-slate-500" title="No data — not part of the composite">
+            n/a
+          </span>
+        ) : (
+          <span className={scoreColor(value)}>{value.toFixed(0)}</span>
+        )}
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-white/5">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-sky-400 to-cyan-400 transition-all"
-          style={{ width: `${Math.min(100, value)}%` }}
-        />
+        {value != null && (
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-sky-400 to-cyan-400 transition-all"
+            style={{ width: `${Math.min(100, value)}%` }}
+          />
+        )}
       </div>
     </div>
   );

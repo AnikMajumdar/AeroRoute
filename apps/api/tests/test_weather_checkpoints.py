@@ -37,4 +37,5 @@ async def test_fetch_checkpoint_weather_handles_null_category(monkeypatch):
     ]
     results = await fetch_checkpoint_weather(checkpoints)
     assert results[0]["flight_category"] == "UNKNOWN"
-    assert results[0]["weather_penalty"] == 10
+    # An unknown category is not scored: it used to be charged an invented 10 points
+    assert results[0]["weather_penalty"] is None

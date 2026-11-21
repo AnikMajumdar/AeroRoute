@@ -68,8 +68,12 @@ export interface AircraftProfile {
 export interface NormalizedScoreBreakdown {
   preference: string;
   composite_score: number;
-  component_scores: Record<string, number>;
+  /** null: no data for that component; it is left out of the composite (see unavailable_components). */
+  component_scores: Record<string, number | null>;
   weights: Record<string, number>;
+  /** Weights actually used: renormalised over the components that have data. */
+  effective_weights?: Record<string, number> | null;
+  unavailable_components?: string[];
   legacy?: Record<string, number>;
 }
 
@@ -93,7 +97,8 @@ export interface WeatherCheckpoint {
   longitude?: number;
   flight_category?: string;
   metar?: Record<string, unknown>;
-  weather_penalty?: number;
+  /** null when the checkpoint's weather is unknown (it is not scored). */
+  weather_penalty?: number | null;
 }
 
 export interface RouteCandidate {

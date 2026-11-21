@@ -1,5 +1,5 @@
 import { test, expect } from "@playwright/test";
-import { E2E_ROUTE_ID } from "../src/lib/e2eMockRoute";
+import { E2E_ROUTE_ID, mockRouteResult } from "../src/lib/e2eMockRoute";
 
 test.describe("Route result page", () => {
   test.beforeEach(async ({ page }) => {
@@ -206,5 +206,79 @@ test.describe("Route result copilot (enabled mock)", () => {
     await input.fill("something else");
     await page.getByTestId("ask-copilot-hazards").click();
     await expect(input).toHaveValue(/What weather and restriction data/);
+  });
+});
+
+test.describe("Route result without weather or delay data", () => {
+  const NO_DATA_ROUTE_ID = "e2e-route-no-weather-data";
+
+  test.beforeEach(async ({ page }) => {
+    await page.route("**/copilot/status", async (route) => {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({ enabled: false, model: null, suggested_questions: [] }),
+      });
+    });
+    // Serve the stored route for the API call only: the page itself is also at .../routes/<id>, and the API is
+    // reached directly (NEXT_PUBLIC_API_URL) or through the /api/backend proxy depending on the environment.
+    await page.route(`**/routes/${NO_DATA_ROUTE_ID}`, async (route) => {
+      const request = route.request();
+      const cors = {
+        "access-control-allow-origin": "*",
+        "access-control-allow-headers": "*",
+        "access-control-allow-methods": "GET, OPTIONS",
+      };
+      if (request.method() === "OPTIONS") {
+        await route.fulfill({ status: 204, headers: cors });
+        return;
+      }
+      if (request.method() !== "GET" || request.resourceType() !== "fetch") {
+        await route.fallback();
+        return;
+      }
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        headers: cors,
+        body: JSON.stringify({
+          ...mockRouteResult,
+          id: NO_DATA_ROUTE_ID,
+          normalized_score_breakdown: {
+            preference: "balanced",
+            composite_score: 87.5,
+            component_scores: { time: 100, fuel: 100, weather: null, delay: null, diversion: 50 },
+            weights: { time: 0.25, fuel: 0.2, weather: 0.2, delay: 0.2, diversion: 0.15 },
+            effective_weights: { time: 0.4167, fuel: 0.3333, diversion: 0.25 },
+            unavailable_components: ["weather", "delay"],
+          },
+        }),
+      });
+    });
+  });
+
+  test("shows n/a for components without data and says the composite leaves them out", async ({ page }) => {
+    const pageErrors: string[] = [];
+    page.on("pageerror", (err) => pageErrors.push(err.message));
+
+    await page.goto(`/routes/${NO_DATA_ROUTE_ID}`);
+
+    const breakdown = page.getByTestId("score-breakdown");
+    await expect(breakdown).toBeVisible();
+    await expect(breakdown.getByText(/88\/100/)).toBeVisible();
+    await expect(breakdown.getByText("n/a")).toHaveCount(2);
+    await expect(breakdown.getByTestId("score-unavailable-note")).toContainText("No data for weather and delay");
+    // components with data are still drawn as numbers
+    await expect(breakdown.getByText("50", { exact: true })).toBeVisible();
+    expect(pageErrors).toEqual([]);
+  });
+
+  test("a route with complete data has no n/a and no note", async ({ page }) => {
+    await page.goto(`/routes/${E2E_ROUTE_ID}`);
+
+    const breakdown = page.getByTestId("score-breakdown");
+    await expect(breakdown).toBeVisible();
+    await expect(breakdown.getByText("n/a")).toHaveCount(0);
+    await expect(breakdown.getByTestId("score-unavailable-note")).toHaveCount(0);
   });
 });

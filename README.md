@@ -106,7 +106,7 @@ When a user submits **Calculate Route** (`POST /routes/calculate`):
                  • Left offset (~35 NM, left of the direction of travel)
                  • Right offset (~35 NM, right of the direction of travel)
                  • Via best diversion airport (PostGIS corridor)
-                 • Via best-weather en-route checkpoint
+                 • Via best-weather en-route checkpoint (only when a checkpoint has known weather)
 5. Winds       Open-Meteo GFS per segment at cruise pressure level (or surface fallback)
 6. Performance ETE, fuel (climb + cruise + descent + reserve), cost
 7. Score       Weighted 0–100 composite (time, fuel, weather, delay, diversion)
@@ -137,6 +137,8 @@ If the aircraft profile has a `usable_fuel_gal` capacity (all presets do; custom
 | Weather | Dep/dest category + checkpoint penalties |
 | Delay | Rules-based delay signals |
 | Diversion | Corridor airport availability and runway length |
+
+**Missing data is not scored as good conditions.** A component with no data at all — Weather without any METAR flight category, Delay without an FAA status (both are the case while those providers are disconnected, as in the current build) — is returned as `null` (shown as *n/a*), left out of the composite and listed in `unavailable_components`; the remaining weights are renormalised (`effective_weights`) and a warning names what the score is based on. Airports or checkpoints that lack data while the component is still scored from the rest are named in a warning and contribute nothing. Live hazard penalties (SIGMET, TFR, NOTAM) apply to the no-penalty score of 100, so a known adverse signal is never discarded.
 
 ### ML pipeline
 

@@ -40,7 +40,7 @@ CONTEXT FIELD GUIDE (read top to bottom):
 - fuel_breakdown: climb, cruise, descent, reserve, total required fuel
 - aircraft: cruise speed, altitude, fuel burn, climb/descent times, min runway
 - primary_route / alternate_route / comparison / route_candidates: distances, ETE, fuel, scores
-- score_breakdown: normalized 0-100 composite and component scores
+- score_breakdown: normalized 0-100 composite and component scores; a null component (listed in unavailable_components) had no data and is left out of the composite — never describe it as good or bad
 - segments.primary / segments.alternate: per-leg wind, headwind/tailwind, groundspeed, ETE
 - diversions: ranked alternate airports along the corridor with runway length and distance from route
 - ml_predictions.delay_risk: rules-based baseline only — not operational dispatch advice

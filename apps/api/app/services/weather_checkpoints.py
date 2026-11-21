@@ -119,7 +119,8 @@ async def fetch_checkpoint_weather(
                 "longitude": airport["longitude"],
                 "flight_category": category,
                 "metar": metar,
-                "weather_penalty": WEATHER_CATEGORY_PENALTY.get(category, 10),
+                # None for an unknown category: a missing observation is not scored (it used to count as 10 points)
+                "weather_penalty": WEATHER_CATEGORY_PENALTY.get(category),
                 "distance_along_route_nm": round(airport.get("_along_nm", 0), 1),
                 "cross_track_nm": round(airport.get("_cross_track_nm", 0), 1),
             }
@@ -128,16 +129,19 @@ async def fetch_checkpoint_weather(
 
 
 def best_weather_checkpoint(checkpoints: list[dict[str, Any]]) -> dict[str, Any] | None:
-    if not checkpoints:
-        return None
+    """The checkpoint with the best known flight category (the first along the route on a tie).
+
+    None when no checkpoint has known weather: there is no "best weather" to route through, and picking the
+    first checkpoint would present an arbitrary airport as the best-weather choice.
+    """
     scored = [
         c
         for c in checkpoints
-        if normalize_flight_category(c.get("flight_category")) != "UNKNOWN"
+        if normalize_flight_category(c.get("flight_category")) in CATEGORY_ORDER
     ]
     if not scored:
-        return checkpoints[0] if checkpoints else None
-    scored.sort(
-        key=lambda c: CATEGORY_ORDER.get(normalize_flight_category(c.get("flight_category")), 99)
+        return None
+    return min(
+        scored,
+        key=lambda c: CATEGORY_ORDER[normalize_flight_category(c.get("flight_category"))],
     )
-    return scored[0]

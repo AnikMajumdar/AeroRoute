@@ -19,7 +19,12 @@ from app.services.ml_features import extract_delay_features, extract_ete_feature
 from app.services.faa_nas import faa_nas_client
 from app.services.fuel_model import calculate_fuel_breakdown
 from app.services.open_meteo import open_meteo_client, wind_quality_from_segments
-from app.services.route_scoring import ScoringInput, calculate_normalized_score
+from app.services.route_scoring import (
+    ScoringInput,
+    calculate_normalized_score,
+    is_known_flight_category,
+    scoring_data_warnings,
+)
 from app.services.weather_checkpoints import (
     best_weather_checkpoint,
     fetch_checkpoint_weather,
@@ -176,6 +181,37 @@ def wind_quality_warnings(segments: list[dict[str, Any]]) -> list[str]:
     return warnings
 
 
+def faa_status_known(status: dict[str, Any] | None) -> bool:
+    """True when an FAA NAS status was actually obtained (absent or 'unknown' means it was not)."""
+    return str((status or {}).get("status") or "unknown").lower() != "unknown"
+
+
+def data_gap_warnings(
+    breakdown: dict[str, Any],
+    weather_gaps: list[str],
+    status_gaps: list[str],
+    checkpoints_without_weather: int = 0,
+    checkpoint_count: int = 0,
+) -> list[str]:
+    """Warnings for inputs that are missing although their score component was still calculated from the rest.
+
+    A component with no data at all is reported by ``scoring_data_warnings`` instead.
+    """
+    unavailable = set(breakdown.get("unavailable_components") or [])
+    warnings: list[str] = []
+    if "weather" not in unavailable:
+        if weather_gaps:
+            warnings.append(f"Weather unavailable for {' and '.join(weather_gaps)} — not included in the weather score")
+        if 0 < checkpoints_without_weather < checkpoint_count:
+            warnings.append(
+                f"Weather unavailable for {checkpoints_without_weather} of {checkpoint_count} en-route checkpoints "
+                "— not included in the weather score"
+            )
+    if status_gaps and "delay" not in unavailable:
+        warnings.append(f"FAA status unavailable for {' and '.join(status_gaps)} — not included in the delay score")
+    return warnings
+
+
 def _cruise_minutes(
     samples: list[dict[str, Any]],
     cruise_from_nm: float,
@@ -308,9 +344,10 @@ async def _compute_variant_metrics(
         destination_ground_stop=scoring_context.get("destination_ground_stop", False),
         departure_flight_category=scoring_context.get("departure_flight_category"),
         destination_flight_category=scoring_context.get("destination_flight_category"),
-        checkpoint_weather_penalty=scoring_context.get("checkpoint_weather_penalty", 0),
+        checkpoint_weather_penalty=scoring_context.get("checkpoint_weather_penalty"),
         diversion_count=scoring_context.get("diversion_count", 5),
         min_diversion_runway_ft=scoring_context.get("min_diversion_runway_ft", 5000),
+        delay_known=scoring_context.get("delay_known", True),
     )
     breakdown = calculate_normalized_score(score_input, preference=route_preference)
 
@@ -421,9 +458,9 @@ class RouteCalculatorService:
             destination["id"],
         )
         checkpoint_weather = await fetch_checkpoint_weather(checkpoints_raw)
-        checkpoint_penalty = sum(c.get("weather_penalty", 0) for c in checkpoint_weather) / max(
-            len(checkpoint_weather), 1
-        )
+        # Checkpoints without weather are not scored; None (not 0) tells the scorer that none of them has any.
+        known_penalties = [c["weather_penalty"] for c in checkpoint_weather if c.get("weather_penalty") is not None]
+        checkpoint_penalty = sum(known_penalties) / len(known_penalties) if known_penalties else None
         best_wx_cp = best_weather_checkpoint(checkpoint_weather)
 
         scoring_context = {
@@ -438,6 +475,7 @@ class RouteCalculatorService:
             "departure_flight_category": (dep_weather or {}).get("flight_category"),
             "destination_flight_category": (dest_weather or {}).get("flight_category"),
             "checkpoint_weather_penalty": checkpoint_penalty,
+            "delay_known": faa_status_known(dep_status) or faa_status_known(dest_status),
             "diversion_count": len(diversion_airports),
             "min_diversion_runway_ft": min(
                 (d["airport"].get("longest_runway_ft") or 99999 for d in diversion_airports),
@@ -509,6 +547,25 @@ class RouteCalculatorService:
         )
         primary.score = primary.score_breakdown.get("composite_score", primary.score)
         live_flags = live_data_feature_flags(live_snapshot)
+
+        warnings.extend(scoring_data_warnings(primary.score_breakdown))
+        warnings.extend(
+            data_gap_warnings(
+                primary.score_breakdown,
+                weather_gaps=[
+                    f"{role} {icao or '(no ICAO)'}"
+                    for role, icao, weather in (("departure", dep_icao, dep_weather), ("destination", dest_icao, dest_weather))
+                    if not is_known_flight_category((weather or {}).get("flight_category"))
+                ],
+                status_gaps=[
+                    f"{role} {icao or '(no ICAO)'}"
+                    for role, icao, status in (("departure", dep_icao, dep_status), ("destination", dest_icao, dest_status))
+                    if not faa_status_known(status)
+                ],
+                checkpoints_without_weather=len(checkpoint_weather) - len(known_penalties),
+                checkpoint_count=len(checkpoint_weather),
+            )
+        )
 
         candidate_summaries = [
             {
