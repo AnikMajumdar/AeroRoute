@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from datetime import datetime, timezone
@@ -48,6 +49,7 @@ from app.services.copilot import (
 )
 from app.services.copilot_intent import OPERATIONAL_INTENTS, build_intent_context, generate_suggested_questions
 from app.services.ml_logging import log_model_prediction, log_training_samples
+from app.services.request_status import expire_stale_requests, mark_request_failed
 from app.services.route_brief import build_deterministic_brief
 from app.services.route_calculator import route_calculator
 from app.services.route_context_bundle import get_route_context
@@ -266,6 +268,7 @@ async def create_aircraft(
 @router.get("/routes", response_model=list[RouteListItem])
 async def list_routes(user_id: str = Depends(get_current_user_id)) -> list[RouteListItem]:
     supabase = get_supabase()
+    expire_stale_requests(supabase, user_id)
     requests = (
         supabase.table("route_requests")
         .select("id, status, created_at, departure_airport_id, destination_airport_id")
@@ -348,6 +351,9 @@ async def calculate_route(
             "preference": body.route_preference,
         },
     )
+
+    # Calculations of this user that were killed mid-flight can never finish themselves.
+    expire_stale_requests(supabase, user_id)
 
     request_row = (
         supabase.table("route_requests")
@@ -555,18 +561,17 @@ async def calculate_route(
             body.route_preference,
         )
 
-    except HTTPException:
+    except HTTPException as exc:
+        # Raised by this function itself (e.g. the result could not be saved); the request must not stay 'processing'.
+        mark_request_failed(supabase, route_request_id, str(exc.detail))
+        raise
+    except asyncio.CancelledError:
+        mark_request_failed(supabase, route_request_id, "Cancelled before the calculation finished")
         raise
     except Exception as exc:
         reference = uuid.uuid4().hex[:8]
         logger.exception("Route calculation failed (reference %s)", reference)
-        supabase.table("route_requests").update(
-            {
-                "status": "failed",
-                "error_message": f"{type(exc).__name__} (reference {reference})",
-                "updated_at": datetime.now(timezone.utc).isoformat(),
-            }
-        ).eq("id", route_request_id).execute()
+        mark_request_failed(supabase, route_request_id, f"{type(exc).__name__} (reference {reference})")
         raise HTTPException(status_code=500, detail=f"Route calculation failed (reference {reference})") from exc
 
 
