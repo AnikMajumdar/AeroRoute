@@ -126,6 +126,8 @@ reserve     = (reserve_fuel_min / 60) × fuel_burn_gph
 total       = trip_fuel + reserve
 ```
 
+If the aircraft profile has a `usable_fuel_gal` capacity (all presets do; custom aircraft may set it), `total` is checked against it: a flight that does not fit is reported as **Not feasible non-stop** with the still-air range. Aircraft without a capacity are not checked and the result says so.
+
 **Scoring components (0–100, higher is better):**
 
 | Component | Based on |
@@ -182,7 +184,7 @@ AeroRoute/
 ├── data/
 │   ├── raw/                    # OurAirports CSV (~85K airports)
 │   └── ml/                     # Exported Parquet training data
-└── supabase/migrations/        # 001–009 SQL migrations
+└── supabase/migrations/        # 001–010 SQL migrations
 ```
 
 ---
@@ -225,7 +227,7 @@ Fill in Supabase and Clerk keys (see [Environment Variables](#environment-variab
 
 ### 3. Apply migrations and import airports
 
-In the Supabase SQL editor, run migrations **001 through 009** in order (`supabase/migrations/`).
+In the Supabase SQL editor, run migrations **001 through 010** in order (`supabase/migrations/`).
 
 Then import airport data:
 
@@ -310,11 +312,12 @@ Apply in order via Supabase SQL editor:
 | `007_fix_diversion_postgis.sql` | PostGIS diversion corridor fix |
 | `008_live_data.sql` | Live data snapshots (TFR/NOTAM/hazard storage) |
 | `009_rls_all_tables.sql` | Row-level security on every remaining table (airports, aircraft profiles, segments, diversions, caches, ML tables) |
+| `010_aircraft_presets_usable_fuel.sql` | Usable fuel capacity (range check) and the canonical preset aircraft values |
 
 **Key tables:**
 
 - `airports` — coordinates, PostGIS `geom`, length of the longest **open, paved** runway (closed runways, water lanes and turf/gravel/dirt strips are ignored by the importer; airports without such a runway store `NULL`)
-- `aircraft_profiles` — cruise speed, fuel burn, altitude, climb/descent/reserve
+- `aircraft_profiles` — cruise speed, fuel burn, usable fuel, altitude, climb/descent/reserve
 - `route_requests` / `route_results` — user routes, metrics, paths, scores
 - `route_segments` — per-leg winds, groundspeed, ETE
 - `diversion_airports` — corridor search results
@@ -452,7 +455,7 @@ Note the deployed URL (e.g. `https://user--aeroroute-api-fastapi-app.modal.run`)
 
 ### Production checklist
 
-- [ ] Supabase migrations 001–009 applied
+- [ ] Supabase migrations 001–010 applied
 - [ ] Airports imported (`npm run import:airports`)
 - [ ] Modal secret configured and API deployed
 - [ ] Vercel env vars set (especially `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`)

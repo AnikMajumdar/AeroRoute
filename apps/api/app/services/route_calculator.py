@@ -359,6 +359,7 @@ class RouteCalculatorService:
         # The stored quality and the warnings describe the winds of the route that is actually returned.
         wind_quality = wind_quality_from_segments(primary.segments)
         warnings.extend(wind_quality_warnings(primary.segments))
+        warnings.extend(primary.fuel_breakdown.get("warnings") or [])
 
         route_path = [{"lat": lat, "lon": lon} for lat, lon in primary.waypoints]
         checkpoint_icaos = [c.get("icao") for c in checkpoint_weather if c.get("icao")]

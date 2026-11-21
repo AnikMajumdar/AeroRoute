@@ -284,18 +284,10 @@ def seed_route(db: FakeSupabase, user_id: str = "user_A") -> dict[str, str]:
     return {"result_id": result_id, "request_id": request_id, "dep_id": dep["id"], "dest_id": dest["id"], "aircraft_id": aircraft["id"]}
 
 
-def calculation_env(api: Any, monkeypatch: Any) -> SimpleNamespace:
-    """Two eligible airports, a preset aircraft and the real calculator with a faked wind service."""
-    from datetime import timedelta
-
+def install_pressure_winds(monkeypatch: Any) -> None:
+    """Replace the Open-Meteo wind lookup with calm pressure-level winds on every leg."""
     from app.services import route_calculator as calculator_module
     from app.services.open_meteo import wind_quality_from_segments
-
-    departure = make_airport("KJFK")
-    destination = make_airport("KLAX", latitude=33.9425, longitude=-118.4081)
-    aircraft = make_aircraft()
-    api.db.tables["airports"] = [departure, destination]
-    api.db.tables["aircraft_profiles"] = [aircraft]
 
     async def winds(waypoints, cruise_altitude_ft=10000, forecast_time=None):
         segments = [
@@ -314,6 +306,18 @@ def calculation_env(api: Any, monkeypatch: Any) -> SimpleNamespace:
         return segments, wind_quality_from_segments(segments)
 
     monkeypatch.setattr(calculator_module.open_meteo_client, "sample_route_winds", winds)
+
+
+def calculation_env(api: Any, monkeypatch: Any) -> SimpleNamespace:
+    """Two eligible airports, a preset aircraft and the real calculator with a faked wind service."""
+    from datetime import timedelta
+
+    departure = make_airport("KJFK")
+    destination = make_airport("KLAX", latitude=33.9425, longitude=-118.4081)
+    aircraft = make_aircraft()
+    api.db.tables["airports"] = [departure, destination]
+    api.db.tables["aircraft_profiles"] = [aircraft]
+    install_pressure_winds(monkeypatch)
 
     payload = {
         "departure_airport_id": departure["id"],

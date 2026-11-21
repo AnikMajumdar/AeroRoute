@@ -30,6 +30,7 @@ def ensure_aircraft_presets(supabase: Client) -> list[dict]:
             "descent_time_min": preset["descent_time_min"],
             "reserve_fuel_min": preset["reserve_fuel_min"],
             "min_runway_ft": preset["min_runway_ft"],
+            "usable_fuel_gal": preset["usable_fuel_gal"],
             "is_preset": True,
             "user_id": None,
         }
