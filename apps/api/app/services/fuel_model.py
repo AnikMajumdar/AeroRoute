@@ -61,12 +61,12 @@ def calculate_fuel_breakdown(
     """Educational fuel planning model — not a substitute for POH/dispatch calculations."""
     fuel_burn_gph = float(aircraft["fuel_burn_gph"])
     climb_fuel = float(aircraft.get("climb_fuel_gal") or fuel_burn_gph * 0.15)
-    climb_time = float(aircraft.get("climb_time_min") or 12)
+    nominal_climb_time = float(aircraft.get("climb_time_min") or 12)
     descent_time = float(aircraft.get("descent_time_min") or 8)
     reserve_min = float(aircraft.get("reserve_fuel_min") or 45)
 
     if climb_ete_minutes is not None:
-        climb_time = climb_ete_minutes
+        climb_fuel *= climb_ete_minutes / nominal_climb_time  # a climb cut short burns proportionally less
     if descent_ete_minutes is not None:
         descent_time = descent_ete_minutes
 

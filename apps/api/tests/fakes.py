@@ -284,8 +284,8 @@ def seed_route(db: FakeSupabase, user_id: str = "user_A") -> dict[str, str]:
     return {"result_id": result_id, "request_id": request_id, "dep_id": dep["id"], "dest_id": dest["id"], "aircraft_id": aircraft["id"]}
 
 
-def install_pressure_winds(monkeypatch: Any) -> None:
-    """Replace the Open-Meteo wind lookup with calm pressure-level winds on every leg."""
+def install_pressure_winds(monkeypatch: Any, headwind_kt: float = 0.0) -> None:
+    """Replace the Open-Meteo wind lookup with a uniform pressure-level wind (signed headwind; calm by default)."""
     from app.services import route_calculator as calculator_module
     from app.services.open_meteo import wind_quality_from_segments
 
@@ -293,10 +293,10 @@ def install_pressure_winds(monkeypatch: Any) -> None:
         segments = [
             {
                 "segment_index": i,
-                "wind_speed_kt": 0.0,
+                "wind_speed_kt": abs(headwind_kt),
                 "wind_direction_deg": 270.0,
-                "headwind_component_kt": 0.0,
-                "tailwind_component_kt": 0.0,
+                "headwind_component_kt": headwind_kt,
+                "tailwind_component_kt": max(0.0, -headwind_kt),
                 "wind_altitude_ft": 8500,
                 "wind_pressure_level_hpa": 700,
                 "wind_source": "pressure_level",
