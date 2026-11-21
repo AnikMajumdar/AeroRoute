@@ -315,19 +315,16 @@ class TestGridSnapping:
             async def get(self, _url, params=None):
                 requests.append(params)
                 hours = int(params["forecast_days"]) * 24
-                level = next(key for key in params["hourly"].split(",") if "hPa" in key and key.startswith("windspeed"))
-                suffix = level.removeprefix("windspeed_")
-                return _Response(
-                    {
-                        "hourly": {
-                            "time": [(today + timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M") for i in range(hours)],
-                            level: [12.0] * hours,
-                            f"winddirection_{suffix}": [270.0] * hours,
-                            "windspeed_10m": [5.0] * hours,
-                            "winddirection_10m": [270.0] * hours,
-                        }
-                    }
-                )
+                hourly = {
+                    "time": [(today + timedelta(hours=i)).strftime("%Y-%m-%dT%H:%M") for i in range(hours)],
+                    "windspeed_10m": [5.0] * hours,
+                    "winddirection_10m": [270.0] * hours,
+                }
+                for key in params["hourly"].split(","):
+                    if "hPa" in key and key.startswith("windspeed"):  # every requested pressure level
+                        hourly[key] = [12.0] * hours
+                        hourly[key.replace("windspeed_", "winddirection_")] = [270.0] * hours
+                return _Response({"hourly": hourly})
 
         class MemoryCache:
             def get(self, key):
@@ -353,6 +350,7 @@ class TestGridSnapping:
         second = await OpenMeteoClient().get_wind_at_point(39.96, -99.93, 8500, when)
         assert len(requests) == 1
         assert first == second
+        assert first["wind_source"] == "pressure_level" and first["wind_speed_kt"] == pytest.approx(12.0)
         assert len(store) == 1
 
     async def test_points_in_different_cells_are_requested_separately(self, http):
