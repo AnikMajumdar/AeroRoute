@@ -494,6 +494,7 @@ async def calculate_route(
                 {
                     "airport": AirportSummary(**row_to_airport(div["airport"])),
                     "distance_from_route_nm": div["distance_from_route_nm"],
+                    "distance_along_route_nm": div.get("distance_along_route_nm"),
                     "rank": rank,
                 }
             )

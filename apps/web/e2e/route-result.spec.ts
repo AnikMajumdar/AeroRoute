@@ -70,6 +70,7 @@ test.describe("Route result page", () => {
     await expect(table).toBeVisible();
     await expect(table.getByText("KPHX")).toBeVisible();
     await expect(table.getByText("35.2 NM")).toBeVisible();
+    await expect(table.getByText("1,612 NM")).toBeVisible();
     await expect(table.getByText("11,489 ft")).toBeVisible();
   });
 

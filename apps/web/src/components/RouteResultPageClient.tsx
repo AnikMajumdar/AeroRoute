@@ -384,7 +384,8 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
                   <th className="px-2 pb-3 font-medium">Rank</th>
                   <th className="px-2 pb-3 font-medium">ICAO</th>
                   <th className="px-2 pb-3 font-medium">Name</th>
-                  <th className="px-2 pb-3 font-medium">Distance</th>
+                  <th className="px-2 pb-3 font-medium">Off track</th>
+                  <th className="px-2 pb-3 font-medium">Along route</th>
                   <th className="px-2 pb-3 font-medium">Runway</th>
                 </tr>
               </thead>
@@ -400,6 +401,9 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
                     </td>
                     <td className="px-2 py-3">{d.airport.name}</td>
                     <td className="px-2 py-3">{d.distance_from_route_nm.toFixed(1)} NM</td>
+                    <td className="px-2 py-3" title="Distance from the departure to the point of the route abeam of the airport">
+                      {d.distance_along_route_nm != null ? `${Math.round(d.distance_along_route_nm).toLocaleString()} NM` : "—"}
+                    </td>
                     <td className="px-2 py-3">
                       {d.airport.longest_runway_ft
                         ? `${d.airport.longest_runway_ft.toLocaleString()} ft`

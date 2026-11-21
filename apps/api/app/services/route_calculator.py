@@ -36,6 +36,11 @@ logger = logging.getLogger(__name__)
 
 OFFSET_NM = 35.0
 
+# The "via diversion" route goes through a diversion airport that is off the direct track by this much: closer
+# airports are on the direct route already and a route through them would only repeat it.
+MIN_VIA_DIVERSION_OFFSET_NM = 15.0
+MAX_VIA_DIVERSION_OFFSET_NM = 75.0
+
 # Average speed while climbing / descending as a fraction of cruise speed (light piston and turboprop typical).
 CLIMB_SPEED_FACTOR = 0.7
 DESCENT_SPEED_FACTOR = 0.9
@@ -146,6 +151,25 @@ def _build_route_variants(
         )
 
     return variants
+
+
+def choose_via_diversion(diversions: list[dict[str, Any]], route_nm: float) -> dict[str, Any] | None:
+    """The airport for the "via diversion" route: a diversion airport off the direct track by 15-75 NM that is
+    nearest to the middle of the route (the closest one to the track on a tie); None if there is none.
+    """
+    options = [
+        d
+        for d in diversions
+        if MIN_VIA_DIVERSION_OFFSET_NM <= d["distance_from_route_nm"] <= MAX_VIA_DIVERSION_OFFSET_NM
+    ]
+    if not options:
+        return None
+    middle = route_nm / 2
+    best = min(
+        options,
+        key=lambda d: (abs(d.get("distance_along_route_nm", middle) - middle), d["distance_from_route_nm"]),
+    )
+    return best["airport"]
 
 
 def wind_quality_warnings(segments: list[dict[str, Any]]) -> list[str]:
@@ -433,23 +457,21 @@ class RouteCalculatorService:
 
         direct_waypoints = [(dep_lat, dep_lon), (dest_lat, dest_lon)]
 
-        diversion_airports: list[dict[str, Any]] = []
-        if supabase:
-            diversion_airports = find_diversion_airports_postgis(
-                supabase,
-                dep_lon,
-                dep_lat,
-                dest_lon,
-                dest_lat,
-                departure["id"],
-                destination["id"],
-                min_runway_ft=min_runway,
-                fallback_candidates=checkpoint_candidates or [],
-            )
+        diversion_airports = find_diversion_airports_postgis(
+            supabase,
+            dep_lon,
+            dep_lat,
+            dest_lon,
+            dest_lat,
+            departure["id"],
+            destination["id"],
+            min_runway_ft=min_runway,
+            fallback_candidates=checkpoint_candidates or [],
+        )
         if not diversion_airports:
             warnings.append("No suitable diversion airports found — verify alternate airports manually")
 
-        best_diversion = diversion_airports[0]["airport"] if diversion_airports else None
+        best_diversion = choose_via_diversion(diversion_airports, direct_dist)
 
         checkpoints_raw = select_checkpoint_airports(
             direct_waypoints,
@@ -647,35 +669,3 @@ class RouteCalculatorService:
 
 
 route_calculator = RouteCalculatorService()
-
-
-# Geometric corridor search retained for unit tests (production uses PostGIS)
-def find_diversion_airports(
-    route_waypoints: list[tuple[float, float]],
-    all_airports: list[dict[str, Any]],
-    departure_id: str,
-    destination_id: str,
-    min_runway_ft: int = 3000,
-) -> list[dict[str, Any]]:
-    from app.geo.utils import cross_track_distance_nm
-
-    candidates: list[dict[str, Any]] = []
-    for airport in all_airports:
-        if airport["id"] in (departure_id, destination_id):
-            continue
-        if airport.get("airport_type") not in ("small_airport", "medium_airport", "large_airport"):
-            continue
-        if (airport.get("longest_runway_ft") or 0) < min_runway_ft:
-            continue
-        apt_lat, apt_lon = airport["latitude"], airport["longitude"]
-        min_ct = float("inf")
-        for i in range(len(route_waypoints) - 1):
-            lat1, lon1 = route_waypoints[i]
-            lat2, lon2 = route_waypoints[i + 1]
-            min_ct = min(min_ct, cross_track_distance_nm(lat1, lon1, lat2, lon2, apt_lat, apt_lon))
-        if 25.0 <= min_ct <= 50.0:
-            candidates.append(
-                {"airport": airport, "distance_from_route_nm": round(min_ct, 2)}
-            )
-    candidates.sort(key=lambda c: c["distance_from_route_nm"])
-    return candidates[:10]
