@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { AirportAutocomplete } from "@/components/AirportAutocomplete";
 import { ConusNotice } from "@/components/ConusNotice";
 import { PageLayout } from "@/components/Layout";
+import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 import { Input, Label } from "@/components/ui/Input";
@@ -29,6 +30,15 @@ const DEMO_ROUTE = {
   destinationQuery: "KLAX",
 };
 
+const CALC_STAGES = [
+  "Resolving airports and aircraft profile",
+  "Sampling winds aloft along the route",
+  "Checking weather at departure, destination, and checkpoints",
+  "Scoring diversion airports",
+  "Estimating fuel, ETE, and delay risk",
+];
+const CALC_STAGE_SECONDS = 4;
+
 export default function NewRoutePage() {
   const { userId, isLoaded, getToken } = useAuth();
   const router = useRouter();
@@ -41,6 +51,7 @@ export default function NewRoutePage() {
   const [departureTime, setDepartureTime] = useState("");
   const [fuelPrice, setFuelPrice] = useState("6.50");
   const [loading, setLoading] = useState(false);
+  const [elapsedSec, setElapsedSec] = useState(0);
   const [aircraftLoading, setAircraftLoading] = useState(true);
   const [aircraftError, setAircraftError] = useState("");
   const [error, setError] = useState("");
@@ -78,6 +89,15 @@ export default function NewRoutePage() {
     void loadAircraft();
     setDepartureTime(toLocalDatetimeInputValue(new Date()));
   }, [loadAircraft]);
+
+  useEffect(() => {
+    if (!loading) return;
+    const startedAt = Date.now();
+    const id = window.setInterval(() => {
+      setElapsedSec(Math.floor((Date.now() - startedAt) / 1000));
+    }, 1000);
+    return () => window.clearInterval(id);
+  }, [loading]);
 
   async function loadDemoRoute() {
     setDemoLoading(true);
@@ -126,6 +146,7 @@ export default function NewRoutePage() {
     // If the user kept the default "now" time, use current time at submit (minute inputs go stale).
     const effectiveDeparture = selected < now ? now : selected;
 
+    setElapsedSec(0);
     setLoading(true);
     setError("");
 
@@ -153,6 +174,18 @@ export default function NewRoutePage() {
   }
 
   if (!isLoaded) return null;
+
+  if (loading) {
+    return (
+      <PageLayout title="Plan New Route" subtitle="Calculating your educational route plan." showDisclaimer={false}>
+        <RouteCalculationLoader
+          departureLabel={departure?.icao_code || departure?.ident || "—"}
+          destinationLabel={destination?.icao_code || destination?.ident || "—"}
+          elapsedSec={elapsedSec}
+        />
+      </PageLayout>
+    );
+  }
 
   return (
     <PageLayout
@@ -289,10 +322,46 @@ export default function NewRoutePage() {
           </div>
         )}
 
-        <Button type="submit" size="lg" disabled={loading || aircraftLoading || aircraft.length === 0}>
-          {loading ? "Calculating route…" : "Calculate Route"}
+        <Button type="submit" size="lg" disabled={aircraftLoading || aircraft.length === 0}>
+          Calculate Route
         </Button>
       </form>
     </PageLayout>
+  );
+}
+
+function RouteCalculationLoader({
+  departureLabel,
+  destinationLabel,
+  elapsedSec,
+}: {
+  departureLabel: string;
+  destinationLabel: string;
+  elapsedSec: number;
+}) {
+  // The API does not report progress, so the stage shown is based on elapsed time only.
+  const stageIndex = Math.min(Math.floor(elapsedSec / CALC_STAGE_SECONDS), CALC_STAGES.length - 1);
+
+  return (
+    <Card padding="p-10" className="max-w-3xl text-center" data-testid="route-calc-loading">
+      <div className="flex flex-col items-center gap-6">
+        <span
+          aria-hidden="true"
+          className="h-12 w-12 animate-spin rounded-full border-2 border-sky-400/20 border-t-sky-400"
+        />
+        <div className="flex items-center gap-3 font-mono text-xl font-semibold">
+          <span className="gradient-text">{departureLabel}</span>
+          <span className="text-muted">→</span>
+          <span className="gradient-text">{destinationLabel}</span>
+        </div>
+        <Badge tone="accent">Calculating route · {elapsedSec}s</Badge>
+        <p role="status" aria-live="polite" className="animate-pulse text-sm text-muted">
+          {CALC_STAGES[stageIndex]}…
+        </p>
+        <p className="text-xs text-slate-500">
+          Route calculation can take a little while. Please keep this page open.
+        </p>
+      </div>
+    </Card>
   );
 }

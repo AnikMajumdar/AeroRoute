@@ -18,6 +18,8 @@ const DEFAULT_SUGGESTED_QUESTIONS = [
 /** A question another component wants in the input. Pass a new object to apply the same text again. */
 export interface CopilotPrefill {
   text: string;
+  /** When true, the question is sent immediately instead of only being placed in the input. */
+  submit?: boolean;
 }
 
 interface RouteCopilotProps {
@@ -42,6 +44,7 @@ export function RouteCopilot({ routeId, prefill }: RouteCopilotProps) {
   const [response, setResponse] = useState<CopilotChatResponse | null>(null);
   const sectionRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const lastSubmittedPrefillRef = useRef<CopilotPrefill | null>(null);
 
   // Apply a question handed over by another component through React state (writing to the DOM input
   // directly would leave the controlled `question` state empty and the Ask button disabled).
@@ -95,6 +98,14 @@ export function RouteCopilot({ routeId, prefill }: RouteCopilotProps) {
     },
     [activeUserId, routeId, getToken]
   );
+
+  // Submit-type prefills are sent once per object; the ref stops `ask`'s identity changes from resending it.
+  useEffect(() => {
+    if (!prefill?.submit || enabled !== true || !activeUserId) return;
+    if (lastSubmittedPrefillRef.current === prefill) return;
+    lastSubmittedPrefillRef.current = prefill;
+    void ask(prefill.text);
+  }, [prefill, enabled, activeUserId, ask]);
 
   return (
     <Card

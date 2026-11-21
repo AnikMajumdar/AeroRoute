@@ -5,10 +5,10 @@ import { Button } from "@/components/ui/Button";
 import { Card } from "@/components/ui/Card";
 
 export const HAZARDS_QUESTION =
-  "What weather and restriction data is available for this route? Note that live FAA and aviation weather APIs are not connected.";
+  "What hazards does this route face based on its winds, weather checkpoints, diversion airports, and runway data? Say clearly which hazard data is missing, since live FAA and aviation weather feeds are not connected.";
 
 interface LiveDataActionsProps {
-  /** Hands a question to the copilot input (through React state, see RouteCopilot's `prefill`). */
+  /** Sends a question to the copilot (through React state, see RouteCopilot's `prefill`). */
   onAskCopilot: (question: string) => void;
 }
 

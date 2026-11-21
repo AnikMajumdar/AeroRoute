@@ -143,7 +143,7 @@ test.describe("Route result copilot (enabled mock)", () => {
     await expect(response.getByText(/not certified flight-planning/i)).toBeVisible();
   });
 
-  test("Ask Copilot about hazards fills the input and the question can be submitted", async ({ page }) => {
+  test("Ask Copilot about hazards sends the hazards question automatically", async ({ page }) => {
     let askedQuestion = "";
 
     await page.route("**/copilot/status", async (route) => {
@@ -176,19 +176,14 @@ test.describe("Route result copilot (enabled mock)", () => {
 
     await page.getByTestId("ask-copilot-hazards").click();
 
-    // The text must reach React state: the input shows it, is focused, and Ask is enabled.
-    const input = page.getByTestId("copilot-input");
-    await expect(input).toHaveValue(/What weather and restriction data is available/);
-    await expect(input).toBeFocused();
-    await expect(page.getByTestId("copilot-submit")).toBeEnabled();
-
-    await page.getByTestId("copilot-submit").click();
-
     await expect(page.getByTestId("copilot-response")).toBeVisible();
-    expect(askedQuestion).toContain("live FAA and aviation weather APIs are not connected");
+    expect(askedQuestion).toContain("What hazards does this route face");
+    await expect(page.getByTestId("copilot-input")).toHaveValue("");
   });
 
-  test("Ask Copilot about hazards can be used repeatedly", async ({ page }) => {
+  test("Ask Copilot about hazards sends one request per click", async ({ page }) => {
+    let requestCount = 0;
+
     await page.route("**/copilot/status", async (route) => {
       await route.fulfill({
         status: 200,
@@ -197,16 +192,30 @@ test.describe("Route result copilot (enabled mock)", () => {
       });
     });
 
+    await page.route(`**/routes/${E2E_ROUTE_ID}/copilot/chat`, async (route) => {
+      if (route.request().method() !== "POST") {
+        await route.continue();
+        return;
+      }
+      requestCount += 1;
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          answer: "Hazard summary.",
+          sources_used: ["route_results"],
+          safety_note: "Educational tool only — not certified flight-planning software.",
+        }),
+      });
+    });
+
     await page.goto(`/routes/${E2E_ROUTE_ID}`);
     await expect(page.getByTestId("route-copilot").getByText("Online")).toBeVisible();
 
-    const input = page.getByTestId("copilot-input");
     await page.getByTestId("ask-copilot-hazards").click();
-    await expect(input).toHaveValue(/What weather and restriction data/);
-
-    await input.fill("something else");
+    await expect(page.getByTestId("copilot-response")).toBeVisible();
     await page.getByTestId("ask-copilot-hazards").click();
-    await expect(input).toHaveValue(/What weather and restriction data/);
+    await expect.poll(() => requestCount).toBe(2);
   });
 });
 

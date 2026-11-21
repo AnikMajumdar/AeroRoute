@@ -147,7 +147,7 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
       )}
 
       <div className="mb-6">
-        <LiveDataActions onAskCopilot={(text) => setCopilotPrefill({ text })} />
+        <LiveDataActions onAskCopilot={(text) => setCopilotPrefill({ text, submit: true })} />
       </div>
 
       <div className="mb-8 grid gap-8 lg:grid-cols-5">
