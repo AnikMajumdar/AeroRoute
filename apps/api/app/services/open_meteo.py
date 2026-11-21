@@ -13,6 +13,7 @@ from app.geo.utils import initial_bearing_deg
 from app.planning_constraints import FORECAST_HORIZON_DAYS
 from app.services.cache import cache_service
 from app.services.wind_altitude import (
+    crosswind_component_kt,
     cruise_altitude_to_pressure_level_hpa,
     wind_components_kt,
 )
@@ -196,10 +197,12 @@ class OpenMeteoClient:
             signed_hw = None
             headwind = None
             tailwind = None
+            crosswind = None
             if wind:
                 signed_hw, headwind, tailwind = wind_components_kt(
                     wind["wind_speed_kt"], wind["wind_direction_deg"], bearing
                 )
+                crosswind = crosswind_component_kt(wind["wind_speed_kt"], wind["wind_direction_deg"], bearing)
 
             segments.append(
                 {
@@ -213,6 +216,7 @@ class OpenMeteoClient:
                     "wind_direction_deg": wind["wind_direction_deg"] if wind else None,
                     "headwind_component_kt": round(signed_hw, 2) if signed_hw is not None else None,
                     "tailwind_component_kt": round(tailwind, 2) if tailwind is not None else None,
+                    "crosswind_component_kt": round(crosswind, 2) if crosswind is not None else None,
                     "wind_altitude_ft": wind.get("wind_altitude_ft") if wind else None,
                     "wind_pressure_level_hpa": wind.get("wind_pressure_level_hpa") if wind else None,
                     "wind_source": wind.get("wind_source") if wind else None,

@@ -25,6 +25,7 @@ from app.services.weather_checkpoints import (
     fetch_checkpoint_weather,
     select_checkpoint_airports,
 )
+from app.services.wind_altitude import groundspeed_kt
 
 logger = logging.getLogger(__name__)
 
@@ -33,6 +34,8 @@ OFFSET_NM = 35.0
 # Average speed while climbing / descending as a fraction of cruise speed (light piston and turboprop typical).
 CLIMB_SPEED_FACTOR = 0.7
 DESCENT_SPEED_FACTOR = 0.9
+# Planning floor for the groundspeed (fraction of cruise speed) so extreme winds cannot produce absurd ETEs.
+MIN_GROUNDSPEED_FRACTION = 0.25
 
 
 @dataclass(frozen=True)
@@ -98,6 +101,7 @@ class RouteVariant:
     score: float
     score_breakdown: dict[str, Any]
     fuel_breakdown: dict[str, Any] = field(default_factory=dict)
+    slow_legs: int = 0  # legs whose groundspeed was raised to the planning floor
 
 
 def _build_route_variants(
@@ -193,6 +197,8 @@ async def _compute_variant_metrics(
     phases = plan_phases(total_distance, aircraft)
     leg_phases = split_leg_distances(leg_distances, phases.climb_nm, phases.descent_nm)
     cruise_ete = 0.0
+    min_groundspeed = MIN_GROUNDSPEED_FRACTION * cruise_speed_kt
+    slow_legs = 0
     segments: list[dict[str, Any]] = []
 
     wind_segments, wind_quality = await open_meteo_client.sample_route_winds(
@@ -208,7 +214,11 @@ async def _compute_variant_metrics(
 
         wind_data = wind_segments[i] if i < len(wind_segments) else {}
         signed_hw = wind_data.get("headwind_component_kt") or 0.0
-        cruise_groundspeed = max(60.0, cruise_speed_kt - signed_hw)
+        crosswind = wind_data.get("crosswind_component_kt") or 0.0
+        achievable_groundspeed = groundspeed_kt(cruise_speed_kt, signed_hw, crosswind)
+        cruise_groundspeed = max(min_groundspeed, achievable_groundspeed)
+        if cruise_nm > 0 and achievable_groundspeed < min_groundspeed:
+            slow_legs += 1
         leg_cruise_ete = (cruise_nm / cruise_groundspeed) * 60
         cruise_ete += leg_cruise_ete
         leg_ete = leg_cruise_ete + phases.climb_minutes_for(climb_nm) + phases.descent_minutes_for(descent_nm)
@@ -278,6 +288,7 @@ async def _compute_variant_metrics(
         score=breakdown["composite_score"],
         score_breakdown=breakdown,
         fuel_breakdown=fuel_breakdown.to_dict(),
+        slow_legs=slow_legs,
     )
 
 
@@ -428,6 +439,12 @@ class RouteCalculatorService:
         wind_quality = wind_quality_from_segments(primary.segments)
         warnings.extend(wind_quality_warnings(primary.segments))
         warnings.extend(primary.fuel_breakdown.get("warnings") or [])
+        if primary.slow_legs:
+            warnings.append(
+                f"Very strong winds on {primary.slow_legs} leg(s): groundspeed was limited to "
+                f"{MIN_GROUNDSPEED_FRACTION:.0%} of cruise speed, so ETE and fuel are unreliable "
+                "(educational estimate only)"
+            )
 
         route_path = [{"lat": lat, "lon": lon} for lat, lon in primary.waypoints]
         checkpoint_icaos = [c.get("icao") for c in checkpoint_weather if c.get("icao")]
