@@ -80,19 +80,16 @@ def _install_fake_open_meteo(monkeypatch, today: datetime):
         async def get(self, _url, params=None):
             requests.append(params)
             hours = int(params["forecast_days"]) * 24
-            level = next(key for key in params["hourly"].split(",") if key.startswith("windspeed_") and "hPa" in key)
-            suffix = level.removeprefix("windspeed_")
-            return _Response(
-                {
-                    "hourly": {
-                        "time": _hours(today, hours),
-                        level: [float(i) for i in range(hours)],
-                        f"winddirection_{suffix}": [270.0] * hours,
-                        "windspeed_10m": [5.0] * hours,
-                        "winddirection_10m": [270.0] * hours,
-                    }
-                }
-            )
+            hourly = {
+                "time": _hours(today, hours),
+                "windspeed_10m": [5.0] * hours,
+                "winddirection_10m": [270.0] * hours,
+            }
+            for key in params["hourly"].split(","):
+                if key.startswith("windspeed_") and "hPa" in key:  # every requested level carries the hour index
+                    hourly[key] = [float(i) for i in range(hours)]
+                    hourly[key.replace("windspeed_", "winddirection_")] = [270.0] * hours
+            return _Response({"hourly": hourly})
 
     class NoCache:
         def get(self, _key):

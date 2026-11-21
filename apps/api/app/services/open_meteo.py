@@ -15,7 +15,11 @@ from app.services.cache import cache_service
 from app.services.wind_altitude import (
     crosswind_component_kt,
     cruise_altitude_to_pressure_level_hpa,
+    interpolate_wind,
+    pressure_levels_around,
+    uv_to_wind,
     wind_components_kt,
+    wind_to_uv,
 )
 
 logger = logging.getLogger(__name__)
@@ -66,12 +70,16 @@ def wind_quality_from_segments(segments: list[dict[str, Any]]) -> str:
 
 def _mean_wind(winds: list[dict[str, Any]]) -> tuple[float, float]:
     """Vector-mean (speed, direction the wind blows from) of several winds."""
-    u = sum(-w["wind_speed_kt"] * math.sin(math.radians(w["wind_direction_deg"])) for w in winds) / len(winds)
-    v = sum(-w["wind_speed_kt"] * math.cos(math.radians(w["wind_direction_deg"])) for w in winds) / len(winds)
-    speed = math.hypot(u, v)
-    if speed < 1e-9:
-        return 0.0, float(winds[0]["wind_direction_deg"])
-    return speed, (math.degrees(math.atan2(-u, -v)) + 360.0) % 360.0
+    vectors = [wind_to_uv(w["wind_speed_kt"], w["wind_direction_deg"]) for w in winds]
+    u = sum(vec[0] for vec in vectors) / len(vectors)
+    v = sum(vec[1] for vec in vectors) / len(vectors)
+    return uv_to_wind(u, v, float(winds[0]["wind_direction_deg"]))
+
+
+def _value_at(series: list[Any] | None, index: int) -> float | None:
+    if not series or index >= len(series) or series[index] is None:
+        return None
+    return float(series[index])
 
 
 class OpenMeteoClient:
@@ -108,17 +116,32 @@ class OpenMeteoClient:
         cruise_altitude_ft: int = 10000,
         forecast_time: datetime | None = None,
     ) -> dict[str, Any] | None:
-        level_hpa, wind_altitude_ft = cruise_altitude_to_pressure_level_hpa(cruise_altitude_ft)
+        """Wind at a point and altitude, interpolated between the two pressure levels around the altitude."""
+        lower, upper, weight = pressure_levels_around(cruise_altitude_ft)
         lat, lon = _snap_to_grid(lat), _snap_to_grid(lon)
         effective_time = (forecast_time or datetime.now(timezone.utc)).astimezone(timezone.utc)
-        cache_key = f"wind:{lat:.2f}:{lon:.2f}:{level_hpa}:{effective_time:%Y-%m-%dT%H}"
-        cached = cache_service.get(cache_key)
-        if cached is not None:
-            return cached
+        # The cache holds the raw winds of both levels, so aircraft at different altitudes share an entry.
+        cache_key = f"wind:{lat:.2f}:{lon:.2f}:{lower[0]}:{upper[0]}:{effective_time:%Y-%m-%dT%H}"
+        raw = cache_service.get(cache_key)
+        if raw is None:
+            raw = await self._fetch_raw_winds(lat, lon, sorted({lower[0], upper[0]}), forecast_time, effective_time)
+            if raw is None:
+                return None
+            cache_service.set(cache_key, raw, settings.cache_wind_ttl)
+        return self._wind_from_raw(raw, lower, upper, weight, cruise_altitude_ft)
 
+    async def _fetch_raw_winds(
+        self,
+        lat: float,
+        lon: float,
+        levels_hpa: list[int],
+        forecast_time: datetime | None,
+        effective_time: datetime,
+    ) -> dict[str, Any] | None:
+        """Winds of the given pressure levels (and the surface) for one forecast hour, or None if unavailable."""
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                hourly_vars = self._pressure_level_hourly_vars(level_hpa)
+                hourly_vars = ",".join(self._pressure_level_hourly_vars(level) for level in levels_hpa)
                 response = await client.get(
                     OPEN_METEO_BASE,
                     params={
@@ -131,8 +154,7 @@ class OpenMeteoClient:
                     },
                 )
                 response.raise_for_status()
-                data = response.json()
-                hourly = data.get("hourly", {})
+                hourly = response.json().get("hourly", {})
                 times = hourly.get("time", [])
                 idx = self._hour_index(times, forecast_time)
                 if idx is None:
@@ -145,42 +167,58 @@ class OpenMeteoClient:
                     )
                     return None
 
-                speed_key = f"windspeed_{level_hpa}hPa"
-                dir_key = f"winddirection_{level_hpa}hPa"
-                speeds = hourly.get(speed_key, [])
-                directions = hourly.get(dir_key, [])
+                def wind_at(speed_key: str, direction_key: str) -> dict[str, float] | None:
+                    speed = _value_at(hourly.get(speed_key), idx)
+                    direction = _value_at(hourly.get(direction_key), idx)
+                    return {"speed": speed, "direction": direction} if speed is not None and direction is not None else None
 
-                wind_source = "pressure_level"
-                if speeds and directions and idx < len(speeds) and speeds[idx] is not None:
-                    speed = float(speeds[idx])
-                    direction = float(directions[idx])
-                else:
-                    speeds_10 = hourly.get("windspeed_10m", [])
-                    dirs_10 = hourly.get("winddirection_10m", [])
-                    if not speeds_10 or not dirs_10:
-                        return None
-                    idx = min(idx, len(speeds_10) - 1, len(dirs_10) - 1)
-                    speed = float(speeds_10[idx])
-                    direction = float(dirs_10[idx])
-                    wind_source = "surface_fallback"
-                    wind_altitude_ft = 10
-                    level_hpa = 0
-
-                result = {
-                    "wind_speed_kt": speed,
-                    "wind_direction_deg": direction,
-                    "wind_altitude_ft": wind_altitude_ft,
-                    "wind_pressure_level_hpa": level_hpa if level_hpa else None,
-                    "wind_source": wind_source,
+                raw = {
+                    "levels": {
+                        str(level): wind_at(f"windspeed_{level}hPa", f"winddirection_{level}hPa") for level in levels_hpa
+                    },
+                    "surface": wind_at("windspeed_10m", "winddirection_10m"),
                 }
-                cache_service.set(cache_key, result, settings.cache_wind_ttl)
-                return result
+                if raw["surface"] is None and not any(raw["levels"].values()):
+                    return None
+                return raw
         except httpx.TimeoutException:
             logger.warning("Open-Meteo wind request timed out at %s,%s", lat, lon)
             return None
         except Exception as exc:
             logger.warning("Open-Meteo wind fetch failed at %s,%s: %s", lat, lon, exc)
             return None
+
+    @staticmethod
+    def _wind_from_raw(
+        raw: dict[str, Any],
+        lower: tuple[int, int],
+        upper: tuple[int, int],
+        weight: float,
+        cruise_altitude_ft: int,
+    ) -> dict[str, Any] | None:
+        levels = raw.get("levels") or {}
+        lower_wind, upper_wind = levels.get(str(lower[0])), levels.get(str(upper[0]))
+        if lower_wind and upper_wind:
+            speed, direction = interpolate_wind(
+                (lower_wind["speed"], lower_wind["direction"]), (upper_wind["speed"], upper_wind["direction"]), weight
+            )
+            return {
+                "wind_speed_kt": speed,
+                "wind_direction_deg": direction,
+                "wind_altitude_ft": int(round(cruise_altitude_ft)),
+                "wind_pressure_level_hpa": cruise_altitude_to_pressure_level_hpa(cruise_altitude_ft)[0],
+                "wind_source": "pressure_level",
+            }
+        surface = raw.get("surface")
+        if not surface:
+            return None
+        return {
+            "wind_speed_kt": surface["speed"],
+            "wind_direction_deg": surface["direction"],
+            "wind_altitude_ft": 10,
+            "wind_pressure_level_hpa": None,
+            "wind_source": "surface_fallback",
+        }
 
     @staticmethod
     def headwind_component_kt(

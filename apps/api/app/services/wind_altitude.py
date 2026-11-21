@@ -59,3 +59,50 @@ def groundspeed_kt(true_airspeed_kt: float, headwind_kt: float, crosswind_kt: fl
     if abs(crosswind_kt) >= true_airspeed_kt:
         return 0.0
     return math.sqrt(true_airspeed_kt**2 - crosswind_kt**2) - headwind_kt
+
+
+def pressure_levels_around(altitude_ft: float) -> tuple[tuple[int, int], tuple[int, int], float]:
+    """The pressure levels (hPa, ft) enclosing an altitude and the weight (0-1) of the upper one.
+
+    Outside the available range, or exactly on a level, both entries are the same level.
+    """
+    levels = PRESSURE_LEVELS_HPA
+    if altitude_ft <= levels[0][1]:
+        return levels[0], levels[0], 0.0
+    if altitude_ft >= levels[-1][1]:
+        return levels[-1], levels[-1], 0.0
+    for lower, upper in zip(levels, levels[1:]):
+        if lower[1] <= altitude_ft <= upper[1]:
+            weight = (altitude_ft - lower[1]) / (upper[1] - lower[1])
+            if weight == 0.0:
+                return lower, lower, 0.0
+            if weight == 1.0:
+                return upper, upper, 0.0
+            return lower, upper, weight
+    return levels[-1], levels[-1], 0.0
+
+
+def wind_to_uv(speed_kt: float, direction_deg: float) -> tuple[float, float]:
+    """East and north components of a wind given as (speed, direction it blows from)."""
+    rad = math.radians(direction_deg)
+    return -speed_kt * math.sin(rad), -speed_kt * math.cos(rad)
+
+
+def uv_to_wind(u: float, v: float, calm_direction_deg: float = 0.0) -> tuple[float, float]:
+    """(speed, direction it blows from) of east/north components."""
+    speed = math.hypot(u, v)
+    if speed < 1e-9:
+        return 0.0, calm_direction_deg
+    return speed, (math.degrees(math.atan2(-u, -v)) + 360.0) % 360.0
+
+
+def interpolate_wind(
+    lower: tuple[float, float], upper: tuple[float, float], weight: float
+) -> tuple[float, float]:
+    """Wind between two levels, interpolated on the (u, v) components so that veering winds stay correct.
+
+    Each wind is (speed_kt, direction_deg); ``weight`` is the share of the upper one.
+    """
+    u0, v0 = wind_to_uv(*lower)
+    u1, v1 = wind_to_uv(*upper)
+    return uv_to_wind(u0 + weight * (u1 - u0), v0 + weight * (v1 - v0), lower[1])
