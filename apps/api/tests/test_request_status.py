@@ -100,6 +100,19 @@ class TestFailureLeavesNoProcessingRequest:
         assert request["status"] == "failed"
         assert "Cancelled" in request["error_message"]
 
+    def test_calculation_over_the_time_limit_is_marked_failed_with_504(self, env, monkeypatch):
+        async def slow(**_kwargs):
+            await asyncio.sleep(5)
+
+        monkeypatch.setattr("app.routers.routes.route_calculator.calculate", slow)
+        monkeypatch.setattr(routes_module.settings, "route_calc_timeout_sec", 0.05)
+        response = env.post()
+        assert response.status_code == 504
+        (request,) = env.db.rows("route_requests")
+        assert request["status"] == "failed"
+        assert request["error_message"] == "Route calculation timed out"
+        assert env.db.rows("route_results") == []
+
 
 class TestStaleRequests:
     @staticmethod

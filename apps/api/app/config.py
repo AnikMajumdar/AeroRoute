@@ -75,7 +75,7 @@ class Settings(BaseSettings):
     cache_pirep_ttl: int = 600
     cache_diversion_ttl: int = 1800
     async_route_calc: bool = False
-    route_calc_timeout_sec: float = 15.0
+    route_calc_timeout_sec: float = 90.0
 
     @field_validator("copilot_enabled", "allow_dev_auth_header", mode="before")
     @classmethod

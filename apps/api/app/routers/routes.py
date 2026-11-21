@@ -9,6 +9,7 @@ from typing import Annotated, Any
 from fastapi import APIRouter, Depends, HTTPException, Path, Query
 
 from app.auth import get_current_user_id, row_to_airport
+from app.config import settings
 from app.db import get_supabase
 from app.db_utils import fetch_one
 from app.geo.conus import CONUS_MAX_LAT, CONUS_MAX_LON, CONUS_MIN_LAT, CONUS_MIN_LON
@@ -397,15 +398,18 @@ async def calculate_route(
             .execute()
         ).data or []
 
-        calc_result = await route_calculator.calculate(
-            departure=departure,
-            destination=destination,
-            aircraft=aircraft,
-            fuel_price=body.fuel_price_usd_per_gal,
-            supabase=supabase,
-            checkpoint_candidates=checkpoint_candidates,
-            departure_time=body.departure_time,
-            route_preference=body.route_preference,
+        calc_result = await asyncio.wait_for(
+            route_calculator.calculate(
+                departure=departure,
+                destination=destination,
+                aircraft=aircraft,
+                fuel_price=body.fuel_price_usd_per_gal,
+                supabase=supabase,
+                checkpoint_candidates=checkpoint_candidates,
+                departure_time=body.departure_time,
+                route_preference=body.route_preference,
+            ),
+            timeout=settings.route_calc_timeout_sec,
         )
 
         primary = calc_result["primary"]
@@ -573,6 +577,9 @@ async def calculate_route(
     except asyncio.CancelledError:
         mark_request_failed(supabase, route_request_id, "Cancelled before the calculation finished")
         raise
+    except asyncio.TimeoutError as exc:
+        mark_request_failed(supabase, route_request_id, "Route calculation timed out")
+        raise HTTPException(status_code=504, detail="Route calculation timed out") from exc
     except Exception as exc:
         reference = uuid.uuid4().hex[:8]
         logger.exception("Route calculation failed (reference %s)", reference)
