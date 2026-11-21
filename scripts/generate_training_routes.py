@@ -35,17 +35,13 @@ FUEL_PRICES = [5.5, 6.0, 6.5, 7.0]
 
 
 async def _resolve_airports(supabase, icaos: list[str]) -> dict[str, dict]:
+    from app.db_utils import fetch_one
+
     result = {}
     for icao in icaos:
-        row = (
-            supabase.table("airports")
-            .select("*")
-            .eq("icao_code", icao)
-            .maybe_single()
-            .execute()
-        )
-        if row.data:
-            result[icao] = row.data
+        row = fetch_one(supabase.table("airports").select("*").eq("icao_code", icao))
+        if row:
+            result[icao] = row
     return result
 
 

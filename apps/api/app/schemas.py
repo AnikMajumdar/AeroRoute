@@ -9,6 +9,8 @@ from app.planning_constraints import FORECAST_HORIZON_DAYS
 
 RoutePreference = Literal["balanced", "fastest", "fuel_saver", "weather_cautious"]
 
+UUID_PATTERN = r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$"
+
 
 class AirportSummary(BaseModel):
     id: str
@@ -34,6 +36,7 @@ class AircraftProfile(BaseModel):
     descent_time_min: float | None = None
     reserve_fuel_min: float | None = None
     min_runway_ft: int | None = None
+    usable_fuel_gal: float | None = None
     is_preset: bool = False
     user_id: str | None = None
 
@@ -42,12 +45,13 @@ class AircraftCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     cruise_speed_kt: int = Field(gt=0, le=600)
     fuel_burn_gph: float = Field(gt=0, le=500)
+    usable_fuel_gal: float | None = Field(default=None, gt=0, le=2000)
 
 
 class RouteCalculateRequest(BaseModel):
-    departure_airport_id: str
-    destination_airport_id: str
-    aircraft_profile_id: str
+    departure_airport_id: str = Field(pattern=UUID_PATTERN)
+    destination_airport_id: str = Field(pattern=UUID_PATTERN)
+    aircraft_profile_id: str = Field(pattern=UUID_PATTERN)
     departure_time: datetime
     fuel_price_usd_per_gal: float = Field(gt=0, le=50)
     route_preference: RoutePreference = "balanced"
@@ -94,6 +98,8 @@ class RouteSegmentDetail(BaseModel):
 class DiversionAirportDetail(BaseModel):
     airport: AirportSummary
     distance_from_route_nm: float
+    # where the airport is abeam of the route, NM from the departure
+    distance_along_route_nm: float | None = None
     rank: int
 
 
@@ -107,14 +113,19 @@ class FuelBreakdownDetail(BaseModel):
     usable_capacity_gal: float | None = None
     fuel_remaining_gal: float | None = None
     fuel_margin_gal: float | None = None
+    feasible: bool | None = None
+    still_air_range_nm: float | None = None
     warnings: list[str] = []
 
 
 class NormalizedScoreBreakdown(BaseModel):
     preference: str
     composite_score: float
-    component_scores: dict[str, float]
+    # None: no data for that component; it is left out of the composite (see unavailable_components)
+    component_scores: dict[str, float | None]
     weights: dict[str, float]
+    effective_weights: dict[str, float] | None = None
+    unavailable_components: list[str] = []
     legacy: dict[str, float] | None = None
     total: float | None = None
 

@@ -3,11 +3,14 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any
 
+from app.geo.timezones import to_local_time
 from app.services.weather_checkpoints import normalize_flight_category
 from app.utils.datetime_parse import parse_iso_datetime
 
 DATASET_VERSION = "v1"
-CATEGORY_RANK = {"VFR": 0, "MVFR": 1, "IFR": 2, "LIFR": 3, "UNKNOWN": 0}
+CATEGORY_RANK = {"VFR": 0, "MVFR": 1, "IFR": 2, "LIFR": 3}
+# Missing weather must not look like good weather: unknown categories get their own value instead of VFR's 0.
+UNKNOWN_CATEGORY_ORD = -1
 
 DELAY_FEATURE_COLUMNS = [
     "departure_hour_local",
@@ -53,13 +56,18 @@ ETE_FEATURE_COLUMNS = [
 
 
 def _category_ord(cat: Any) -> int:
-    return CATEGORY_RANK.get(normalize_flight_category(cat), 0)
+    return CATEGORY_RANK.get(normalize_flight_category(cat), UNKNOWN_CATEGORY_ORD)
 
 
 def _faa_status_from_weather(weather: dict[str, Any] | None) -> dict[str, Any]:
     if not weather or not isinstance(weather, dict):
         return {}
     return weather.get("faa_status") or {}
+
+
+def _faa_unknown(faa: dict[str, Any]) -> int:
+    """1 when there is no usable FAA NAS status (absent, 'unknown' or unparsable), else 0."""
+    return int(not faa or faa.get("status") in (None, "unknown") or not faa.get("parse_success", True))
 
 
 def _metar_from_weather(weather: dict[str, Any] | None) -> dict[str, Any]:
@@ -70,10 +78,11 @@ def _metar_from_weather(weather: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _score_component(score_breakdown: dict[str, Any] | None, key: str) -> float:
+    """Component score for the ML features; neutral 50 when absent or unavailable (stored as null)."""
     if not score_breakdown:
         return 50.0
-    components = score_breakdown.get("component_scores") or {}
-    return float(components.get(key, 50))
+    value = (score_breakdown.get("component_scores") or {}).get(key)
+    return 50.0 if value is None else float(value)
 
 
 def _segment_wind_stats(segments: list[dict[str, Any]]) -> dict[str, float]:
@@ -103,7 +112,10 @@ def _checkpoint_stats(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
             ifr += 1
         elif cat == "LIFR":
             lifr += 1
-    worst = max((_category_ord(c) for c in cats), default=0)
+    worst = max(
+        (CATEGORY_RANK[c] for c in cats if c in CATEGORY_RANK),
+        default=UNKNOWN_CATEGORY_ORD,  # no checkpoint with known weather
+    )
     return {
         "number_of_ifr_checkpoints": ifr,
         "number_of_lifr_checkpoints": lifr,
@@ -111,21 +123,32 @@ def _checkpoint_stats(checkpoints: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
-def _departure_time_parts(request: dict[str, Any]) -> tuple[int, int, int]:
+def _departure_time_parts(
+    request: dict[str, Any], lat: float | None = None, lon: float | None = None
+) -> tuple[int, int, int]:
+    """(hour, weekday, month) of the departure in the local time of the departure airport.
+
+    Without coordinates the UTC values are returned.
+    """
     raw = request.get("departure_time")
-    if not raw:
-        now = datetime.now(timezone.utc)
-        return now.hour, now.weekday(), now.month
-    if isinstance(raw, str):
-        dt = parse_iso_datetime(raw)
-    else:
-        dt = raw
-    if dt is None:
-        now = datetime.now(timezone.utc)
-        return now.hour, now.weekday(), now.month
-    if dt.tzinfo is None:
-        dt = dt.replace(tzinfo=timezone.utc)
-    return dt.hour, dt.weekday(), dt.month
+    dt = parse_iso_datetime(raw) if isinstance(raw, str) and raw else raw
+    if not isinstance(dt, datetime):
+        dt = datetime.now(timezone.utc)
+    local = to_local_time(dt, lat, lon)
+    return local.hour, local.weekday(), local.month
+
+
+def _departure_coordinates(
+    route_result: dict[str, Any], segments: list[dict[str, Any]] | None
+) -> tuple[float | None, float | None]:
+    """Coordinates of the departure airport: the route path (or first leg) starts there."""
+    path = route_result.get("primary_path") or []
+    if path and isinstance(path[0], dict) and path[0].get("lat") is not None and path[0].get("lon") is not None:
+        return float(path[0]["lat"]), float(path[0]["lon"])
+    for seg in sorted(segments or [], key=lambda s: s.get("segment_index", 0)):
+        if seg.get("start_lat") is not None and seg.get("start_lon") is not None:
+            return float(seg["start_lat"]), float(seg["start_lon"])
+    return None, None
 
 
 def _primary_candidate_type(route: dict[str, Any]) -> str:
@@ -139,10 +162,14 @@ def _primary_candidate_type(route: dict[str, Any]) -> str:
 def _candidate_type_ord(name: str) -> int:
     order = {
         "direct": 0,
-        "north_offset": 1,
-        "south_offset": 2,
+        "left_offset": 1,
+        "right_offset": 2,
         "via_diversion": 3,
         "via_weather_checkpoint": 4,
+        # Names stored (and used for the training data) before offsets were labelled by side of track:
+        # "north_offset" was always the left-of-track candidate, "south_offset" the right-of-track one.
+        "north_offset": 1,
+        "south_offset": 2,
     }
     return order.get(name, 0)
 
@@ -163,7 +190,7 @@ def extract_delay_features(
     score_breakdown = route_result.get("normalized_score_breakdown") or route_result.get("score_breakdown")
     wind_stats = _segment_wind_stats(segments or [])
     cp_stats = _checkpoint_stats(checkpoints)
-    hour, dow, month = _departure_time_parts(route_request)
+    hour, dow, month = _departure_time_parts(route_request, *_departure_coordinates(route_result, segments))
 
     return {
         "departure_airport": route_request.get("departure_airport_id"),
@@ -195,8 +222,8 @@ def extract_delay_features(
         "destination_closed": int(bool(dest_faa.get("is_closed"))),
         "departure_ground_stop": int(bool(dep_faa.get("ground_stop"))),
         "destination_ground_stop": int(bool(dest_faa.get("ground_stop"))),
-        "departure_faa_unknown": int(dep_faa.get("status") == "unknown" or not dep_faa.get("parse_success", True)),
-        "destination_faa_unknown": int(dest_faa.get("status") == "unknown" or not dest_faa.get("parse_success", True)),
+        "departure_faa_unknown": _faa_unknown(dep_faa),
+        "destination_faa_unknown": _faa_unknown(dest_faa),
         "weather_score": _score_component(score_breakdown, "weather"),
         "delay_score": _score_component(score_breakdown, "delay"),
         "route_preference": route_request.get("route_preference", "balanced"),
@@ -211,7 +238,7 @@ def extract_ete_features(
 ) -> dict[str, Any]:
     score_breakdown = route_result.get("normalized_score_breakdown") or route_result.get("score_breakdown")
     wind_stats = _segment_wind_stats(segments or [])
-    hour, _, month = _departure_time_parts(route_request)
+    hour, _, month = _departure_time_parts(route_request, *_departure_coordinates(route_result, segments))
     candidate_type = _primary_candidate_type(route_result)
 
     return {
@@ -238,11 +265,16 @@ def extract_ete_features(
 
 
 def refresh_delay_feature_categories(features: dict[str, Any]) -> dict[str, Any]:
-    """Recompute category ords from raw category strings (fixes legacy stored features)."""
+    """Recompute category ords and FAA-unknown flags from the raw stored values (fixes legacy stored features).
+
+    Legacy rows encoded missing weather as VFR (0) and missing FAA data as "known"; both are corrected here.
+    """
     feat = dict(features)
     for role in ("departure", "destination"):
         cat = feat.get(f"{role}_flight_category")
         feat[f"{role}_flight_category_ord"] = _category_ord(cat)
+        if f"{role}_faa_status" in feat and feat[f"{role}_faa_status"] in (None, "unknown"):
+            feat[f"{role}_faa_unknown"] = 1
     return feat
 
 

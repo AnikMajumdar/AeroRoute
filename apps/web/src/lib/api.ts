@@ -68,8 +68,12 @@ export interface AircraftProfile {
 export interface NormalizedScoreBreakdown {
   preference: string;
   composite_score: number;
-  component_scores: Record<string, number>;
+  /** null: no data for that component; it is left out of the composite (see unavailable_components). */
+  component_scores: Record<string, number | null>;
   weights: Record<string, number>;
+  /** Weights actually used: renormalised over the components that have data. */
+  effective_weights?: Record<string, number> | null;
+  unavailable_components?: string[];
   legacy?: Record<string, number>;
 }
 
@@ -93,7 +97,8 @@ export interface WeatherCheckpoint {
   longitude?: number;
   flight_category?: string;
   metar?: Record<string, unknown>;
-  weather_penalty?: number;
+  /** null when the checkpoint's weather is unknown (it is not scored). */
+  weather_penalty?: number | null;
 }
 
 export interface RouteCandidate {
@@ -150,6 +155,8 @@ export interface RouteResult {
   diversion_airports?: {
     airport: Airport;
     distance_from_route_nm: number;
+    /** NM from the departure to the point of the route abeam of the airport. */
+    distance_along_route_nm?: number | null;
     rank: number;
   }[];
   departure_airport?: Airport;
@@ -184,14 +191,16 @@ export interface CopilotStatus {
   suggested_questions?: string[];
 }
 
-const IS_E2E = process.env.E2E_TEST_MODE === "true" || process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true";
-
 async function getRouteMaybeMock(
   id: string,
   userId: string,
   token?: string | null
 ): Promise<RouteResult> {
-  if (IS_E2E) {
+  // Local Playwright runs only; the condition is inlined so production builds drop the fixture chunk.
+  if (
+    (process.env.E2E_TEST_MODE === "true" || process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true") &&
+    process.env.NODE_ENV !== "production"
+  ) {
     const { E2E_ROUTE_ID, mockRouteResult } = await import("@/lib/e2eMockRoute");
     if (id === E2E_ROUTE_ID) {
       return mockRouteResult;
@@ -345,6 +354,8 @@ export function windQualityLabel(quality?: string): string {
       return "Surface wind fallback";
     case "mixed":
       return "Mixed cruise/surface winds";
+    case "partial":
+      return "Partial wind data";
     default:
       return "Wind data unavailable";
   }

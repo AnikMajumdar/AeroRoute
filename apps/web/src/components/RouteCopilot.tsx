@@ -1,7 +1,7 @@
 "use client";
 
 import { useAuth } from "@clerk/nextjs";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { api, CopilotChatResponse } from "@/lib/api";
 import { Badge } from "@/components/ui/Badge";
 import { Button } from "@/components/ui/Button";
@@ -15,14 +15,22 @@ const DEFAULT_SUGGESTED_QUESTIONS = [
   "What fuel price was used and what is the total fuel cost?",
 ];
 
-interface RouteCopilotProps {
-  routeId: string;
+/** A question another component wants in the input. Pass a new object to apply the same text again. */
+export interface CopilotPrefill {
+  text: string;
 }
 
-export function RouteCopilot({ routeId }: RouteCopilotProps) {
+interface RouteCopilotProps {
+  routeId: string;
+  prefill?: CopilotPrefill | null;
+}
+
+export function RouteCopilot({ routeId, prefill }: RouteCopilotProps) {
   const { userId, getToken } = useAuth();
   const e2eUserId =
-    process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true" ? "e2e-test-user" : null;
+    process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true" && process.env.NODE_ENV !== "production"
+      ? "e2e-test-user"
+      : null;
   const activeUserId = userId || e2eUserId;
 
   const [enabled, setEnabled] = useState<boolean | null>(null);
@@ -32,7 +40,21 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [response, setResponse] = useState<CopilotChatResponse | null>(null);
+  const sectionRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
+  // Apply a question handed over by another component through React state (writing to the DOM input
+  // directly would leave the controlled `question` state empty and the Ask button disabled).
+  useEffect(() => {
+    if (prefill) setQuestion(prefill.text);
+  }, [prefill]);
+
+  // Bring the copilot into view and focus the input; re-run once the status check enables the input.
+  useEffect(() => {
+    if (!prefill) return;
+    sectionRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    if (enabled === true) inputRef.current?.focus({ preventScroll: true });
+  }, [prefill, enabled]);
   useEffect(() => {
     api.getCopilotStatus().then((s) => {
       setEnabled(s.enabled);
@@ -76,6 +98,7 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
 
   return (
     <Card
+      ref={sectionRef}
       className="mb-8 border-violet-500/20 bg-gradient-to-br from-violet-500/[0.08] via-transparent to-indigo-500/[0.06] shadow-glow-sm"
       padding="p-6"
       data-testid="route-copilot"
@@ -135,6 +158,7 @@ export function RouteCopilot({ routeId }: RouteCopilotProps) {
             className="flex gap-2"
           >
             <Input
+              ref={inputRef}
               type="text"
               value={question}
               onChange={(e) => setQuestion(e.target.value)}

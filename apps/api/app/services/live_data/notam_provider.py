@@ -133,7 +133,7 @@ class OfficialApiNotamProvider:
                     source_url=self.base_url,
                     fetched_at=fetched_at,
                     available=False,
-                    error=str(exc),
+                    error="NOTAM provider request failed",
                 ),
             )
 

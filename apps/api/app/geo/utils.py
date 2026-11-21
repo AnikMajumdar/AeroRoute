@@ -81,6 +81,35 @@ def cross_track_distance_nm(
     return abs(cross_track_rad * EARTH_RADIUS_NM)
 
 
+def cross_and_along_track_nm(
+    route_lat1: float,
+    route_lon1: float,
+    route_lat2: float,
+    route_lon2: float,
+    point_lat: float,
+    point_lon: float,
+) -> tuple[float, float]:
+    """Position of a point relative to the great-circle route 1 -> 2: (cross-track NM, along-track NM).
+
+    The cross-track distance is unsigned. The along-track distance is measured from point 1 to the spot of the
+    route abeam of the point; it is negative behind point 1 and larger than the route length past point 2.
+    """
+    dist_13 = haversine_nm(route_lat1, route_lon1, point_lat, point_lon) / EARTH_RADIUS_NM
+    if dist_13 == 0:
+        return 0.0, 0.0
+    angle = math.radians(
+        initial_bearing_deg(route_lat1, route_lon1, point_lat, point_lon)
+        - initial_bearing_deg(route_lat1, route_lon1, route_lat2, route_lon2)
+    )
+    cross_rad = math.asin(max(-1.0, min(1.0, math.sin(dist_13) * math.sin(angle))))
+    cos_cross = math.cos(cross_rad)
+    ratio = math.cos(dist_13) / cos_cross if abs(cos_cross) > 1e-12 else 1.0
+    along_rad = math.acos(max(-1.0, min(1.0, ratio)))
+    if math.cos(angle) < 0:
+        along_rad = -along_rad
+    return abs(cross_rad) * EARTH_RADIUS_NM, along_rad * EARTH_RADIUS_NM
+
+
 def along_track_distance_nm(
     route_lat1: float,
     route_lon1: float,
@@ -89,8 +118,8 @@ def along_track_distance_nm(
     point_lat: float,
     point_lon: float,
 ) -> float:
-    """Along-route distance from start to point when the point lies on the segment."""
-    return haversine_nm(route_lat1, route_lon1, point_lat, point_lon)
+    """Distance from the route start to the spot of the route abeam of the point (negative behind the start)."""
+    return cross_and_along_track_nm(route_lat1, route_lon1, route_lat2, route_lon2, point_lat, point_lon)[1]
 
 
 def _segment_position_ok(

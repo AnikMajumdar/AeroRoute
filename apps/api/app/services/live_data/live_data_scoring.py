@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.live_data.types import LiveDataSnapshot
+from app.services.route_scoring import combine_components
 
 
 def summarize_live_restrictions(snapshot: LiveDataSnapshot | dict[str, Any]) -> dict[str, Any]:
@@ -95,17 +96,26 @@ def apply_live_penalties_to_score_breakdown(
     score_breakdown: dict[str, Any],
     penalties: dict[str, float],
 ) -> dict[str, Any]:
+    """Subtract the live-data penalties from the weather and delay components and recompute the composite.
+
+    A component that had no data (None) is not scored, so without a penalty it stays out of the composite. A
+    penalty is a real adverse signal, though: it is applied to the no-penalty score of 100 and the component
+    then counts.
+    """
     updated = dict(score_breakdown)
     components = dict(updated.get("component_scores") or {})
-    if penalties.get("weather_penalty"):
-        components["weather"] = max(0.0, components.get("weather", 100) - penalties["weather_penalty"])
-    if penalties.get("delay_penalty"):
-        components["delay"] = max(0.0, components.get("delay", 100) - penalties["delay_penalty"])
-    updated["component_scores"] = {k: round(v, 1) for k, v in components.items()}
+    for component, penalty_key in (("weather", "weather_penalty"), ("delay", "delay_penalty")):
+        penalty = penalties.get(penalty_key)
+        if penalty:
+            base = components.get(component)
+            components[component] = max(0.0, (100.0 if base is None else base) - penalty)
+    updated["component_scores"] = {k: None if v is None else round(v, 1) for k, v in components.items()}
     weights = updated.get("weights") or {}
-    composite = sum(components.get(k, 0) * weights.get(k, 0) for k in weights)
-    updated["composite_score"] = round(max(0.0, min(100.0, composite)), 1)
-    updated["total"] = updated["composite_score"]
+    composite, effective_weights = combine_components(components, weights)
+    updated["composite_score"] = composite
+    updated["effective_weights"] = effective_weights
+    updated["unavailable_components"] = [key for key in weights if components.get(key) is None]
+    updated["total"] = composite
     updated["live_data_penalties"] = penalties
     return updated
 
@@ -120,4 +130,5 @@ def live_data_warnings(snapshot: LiveDataSnapshot | dict[str, Any]) -> list[str]
         FAA_MSG,
     ]
     warnings.extend(data.get("warnings") or [])
-    return warnings
+    # The providers repeat the same "not connected" messages; show each one once.
+    return list(dict.fromkeys(warnings))

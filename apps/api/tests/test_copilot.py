@@ -122,7 +122,8 @@ class TestCopilotLLM:
         mock_client.post.assert_called_once()
         call_kwargs = mock_client.post.call_args.kwargs
         assert "generativelanguage.googleapis.com" in mock_client.post.call_args.args[0]
-        assert call_kwargs["params"]["key"] == "gemini-test-key"
+        assert call_kwargs["headers"]["x-goog-api-key"] == "gemini-test-key"
+        assert "params" not in call_kwargs
 
     def test_suggested_questions_count(self):
         assert len(SUGGESTED_QUESTIONS) >= 5

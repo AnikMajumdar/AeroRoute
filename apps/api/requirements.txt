@@ -1,16 +1,15 @@
-fastapi>=0.115.0
-uvicorn[standard]>=0.32.0
-pydantic>=2.10.0
-pydantic-settings>=2.6.0
-eval-type-backport>=0.2.0
-supabase>=2.10.0
-httpx>=0.28.0
-PyJWT>=2.9.0
-cryptography>=43.0.0
-python-dotenv>=1.0.0
-pytest>=8.3.0
-pytest-asyncio>=0.24.0
-scikit-learn>=1.5.0
-joblib>=1.4.0
-pandas>=2.2.0
-pyarrow>=17.0.0
+# Runtime dependencies only. Modal installs the hashed requirements.lock compiled from this file.
+# Regenerate the lock after editing (from the repo root):
+#   uv pip compile apps/api/requirements.txt --python-version 3.11 --universal --generate-hashes -o apps/api/requirements.lock
+fastapi>=0.115,<1
+uvicorn[standard]>=0.32,<1
+pydantic>=2.10,<3
+pydantic-settings>=2.6,<3
+eval-type-backport>=0.2; python_version < "3.10"
+supabase>=2.10,<3
+httpx>=0.28,<1
+PyJWT[crypto]>=2.15,<3
+python-dotenv>=1.2.2,<2
+# Pinned to the release that produced ml/artifacts/*.joblib (pickles are not stable across sklearn versions).
+scikit-learn>=1.6.1,<1.7
+joblib>=1.4,<2

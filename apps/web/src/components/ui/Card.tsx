@@ -1,4 +1,4 @@
-import { ReactNode } from "react";
+import { HTMLAttributes, ReactNode, forwardRef } from "react";
 
 type CardVariant = "default" | "glass" | "gradient" | "elevated";
 
@@ -9,21 +9,23 @@ const variantClasses: Record<CardVariant, string> = {
   elevated: "bg-card border-border/60 shadow-card",
 };
 
-export function Card({
-  children,
-  className = "",
-  variant = "glass",
-  hover = false,
-  padding = "p-6",
-}: {
+type CardProps = {
   children: ReactNode;
   className?: string;
   variant?: CardVariant;
   hover?: boolean;
   padding?: string;
-}) {
+} & Omit<HTMLAttributes<HTMLDivElement>, "className" | "children">;
+
+export const Card = forwardRef<HTMLDivElement, CardProps>(function Card(
+  { children, className = "", variant = "glass", hover = false, padding = "p-6", ...rest },
+  ref
+) {
+  // `rest` forwards data-* / aria-* attributes (e.g. data-testid) that Playwright and assistive tech rely on.
   return (
     <div
+      {...rest}
+      ref={ref}
       className={`rounded-2xl border ${variantClasses[variant]} ${padding} ${
         hover ? "transition-all duration-300 hover:border-sky-400/30 hover:shadow-glow-sm hover:-translate-y-0.5" : ""
       } ${className}`}
@@ -31,7 +33,7 @@ export function Card({
       {children}
     </div>
   );
-}
+});
 
 export function CardHeader({
   title,

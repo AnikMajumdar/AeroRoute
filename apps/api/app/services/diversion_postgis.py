@@ -3,20 +3,19 @@ from __future__ import annotations
 import logging
 from typing import Any
 
-from app.geo.utils import cross_track_distance_nm, haversine_nm, is_in_route_corridor
+from app.geo.utils import cross_and_along_track_nm, haversine_nm
 from app.services.wind_altitude import NM_TO_M
 
 logger = logging.getLogger(__name__)
 
+# At most this many diversion airports are returned (stored and shown).
 MAX_DIVERSION_AIRPORTS = 10
+# Airports farther than this from the route are not diversion options.
+DIVERSION_CORRIDOR_NM = 150.0
+# Candidates fetched from PostGIS before the choice that spreads the airports over the route.
+DIVERSION_CANDIDATE_LIMIT = 200
 
-# (min_nm_from_route, max_nm_from_route) search tiers — widen until results found
-DIVERSION_SEARCH_TIERS: list[tuple[float, float]] = [
-    (25.0, 50.0),
-    (15.0, 75.0),
-    (8.0, 100.0),
-    (3.0, 150.0),
-]
+DIVERSION_AIRPORT_TYPES = ("small_airport", "medium_airport", "large_airport")
 
 
 def _row_to_diversion(row: dict[str, Any]) -> dict[str, Any]:
@@ -38,6 +37,60 @@ def _row_to_diversion(row: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def along_route_nm(departure: dict[str, Any], destination: dict[str, Any], airport: dict[str, Any]) -> float | None:
+    """Where an airport is abeam of the route departure -> destination, in NM from the departure."""
+    try:
+        _, along = cross_and_along_track_nm(
+            departure["latitude"],
+            departure["longitude"],
+            destination["latitude"],
+            destination["longitude"],
+            airport["latitude"],
+            airport["longitude"],
+        )
+    except (KeyError, TypeError):
+        return None
+    return round(along, 1)
+
+
+def add_route_position(
+    diversions: list[dict[str, Any]], dep_lat: float, dep_lon: float, dest_lat: float, dest_lon: float
+) -> list[dict[str, Any]]:
+    """Add ``distance_along_route_nm`` (where the airport is abeam of the route, from the departure) to each one."""
+    for diversion in diversions:
+        airport = diversion["airport"]
+        _, along = cross_and_along_track_nm(
+            dep_lat, dep_lon, dest_lat, dest_lon, airport["latitude"], airport["longitude"]
+        )
+        diversion["distance_along_route_nm"] = round(along, 1)
+    return diversions
+
+
+def select_spread_diversions(
+    diversions: list[dict[str, Any]], route_nm: float, limit: int = MAX_DIVERSION_AIRPORTS
+) -> list[dict[str, Any]]:
+    """Up to ``limit`` diversions, closest to the route first, spread over the whole route.
+
+    The closest N airports can all sit around one city and leave the rest of the route without an alternate. The
+    route is therefore cut into ``limit`` equal stretches and the airport closest to the track in each stretch is
+    taken first; places that are left go to the closest of the other airports. Every diversion needs
+    ``distance_along_route_nm`` (see ``add_route_position``).
+    """
+    ranked = sorted(diversions, key=lambda d: d["distance_from_route_nm"])
+    if len(ranked) <= limit or route_nm <= 0:
+        return ranked[:limit]
+    stretch_nm = route_nm / limit
+    chosen: dict[int, dict[str, Any]] = {}
+    for diversion in ranked:  # closest first: the first airport seen in a stretch is the closest one in it
+        stretch = min(limit - 1, max(0, int(diversion["distance_along_route_nm"] // stretch_nm)))
+        chosen.setdefault(stretch, diversion)
+    selected = list(chosen.values())
+    if len(selected) < limit:
+        taken = {id(diversion) for diversion in selected}
+        selected.extend([d for d in ranked if id(d) not in taken][: limit - len(selected)])
+    return sorted(selected, key=lambda d: d["distance_from_route_nm"])
+
+
 def _postgis_search(
     supabase: Any,
     dep_lon: float,
@@ -47,8 +100,6 @@ def _postgis_search(
     departure_id: str,
     destination_id: str,
     min_runway_ft: int,
-    min_nm: float,
-    max_nm: float,
 ) -> list[dict[str, Any]]:
     result = supabase.rpc(
         "find_diversion_airports_in_corridor",
@@ -57,12 +108,12 @@ def _postgis_search(
             "dep_lat": dep_lat,
             "dest_lon": dest_lon,
             "dest_lat": dest_lat,
-            "min_dist_m": min_nm * NM_TO_M,
-            "max_dist_m": max_nm * NM_TO_M,
+            "min_dist_m": 0,
+            "max_dist_m": DIVERSION_CORRIDOR_NM * NM_TO_M,
             "min_runway_ft": min_runway_ft,
             "exclude_dep_id": departure_id,
             "exclude_dest_id": destination_id,
-            "result_limit": MAX_DIVERSION_AIRPORTS,
+            "result_limit": DIVERSION_CANDIDATE_LIMIT,
         },
     ).execute()
     return [_row_to_diversion(row) for row in (result.data or [])]
@@ -77,75 +128,40 @@ def _python_fallback_search(
     departure_id: str,
     destination_id: str,
     min_runway_ft: int,
-    max_cross_track_nm: float = 120.0,
+    max_cross_track_nm: float = DIVERSION_CORRIDOR_NM,
 ) -> list[dict[str, Any]]:
-    """Nearest suitable airports along the route when PostGIS corridor is empty."""
-    route = [(dep_lat, dep_lon), (dest_lat, dest_lon)]
+    """Suitable airports abeam of the route within the corridor, from a list of airports.
+
+    The Python counterpart of the PostGIS function, used when that query fails or finds nothing.
+    """
+    route_nm = haversine_nm(dep_lat, dep_lon, dest_lat, dest_lon)
     found: list[dict[str, Any]] = []
-
-    for airport in candidates:
-        if airport["id"] in (departure_id, destination_id):
-            continue
-        runway = airport.get("longest_runway_ft") or 0
-        if runway < min_runway_ft:
-            continue
-        apt_type = airport.get("airport_type", "")
-        if apt_type not in ("small_airport", "medium_airport", "large_airport"):
-            continue
-        apt_lat, apt_lon = airport["latitude"], airport["longitude"]
-        if not is_in_route_corridor(dep_lat, dep_lon, dest_lat, dest_lon, apt_lat, apt_lon):
-            continue
-        ct = cross_track_distance_nm(dep_lat, dep_lon, dest_lat, dest_lon, apt_lat, apt_lon)
-        if ct > max_cross_track_nm:
-            continue
-        found.append(
-            {
-                "airport": airport,
-                "distance_from_route_nm": round(ct, 2),
-            }
-        )
-
-    found.sort(key=lambda d: d["distance_from_route_nm"])
-    return found[:MAX_DIVERSION_AIRPORTS]
-
-
-def _nearest_runway_fallback(
-    candidates: list[dict[str, Any]],
-    dep_lat: float,
-    dep_lon: float,
-    dest_lat: float,
-    dest_lon: float,
-    departure_id: str,
-    destination_id: str,
-    min_runway_ft: int,
-) -> list[dict[str, Any]]:
-    """Last resort: closest suitable airport to route midpoint (still not dep/dest)."""
-    mid_lat = (dep_lat + dest_lat) / 2
-    mid_lon = (dep_lon + dest_lon) / 2
-    best: dict[str, Any] | None = None
-    best_dist = float("inf")
 
     for airport in candidates:
         if airport["id"] in (departure_id, destination_id):
             continue
         if (airport.get("longest_runway_ft") or 0) < min_runway_ft:
             continue
-        apt_type = airport.get("airport_type", "")
-        if apt_type not in ("small_airport", "medium_airport", "large_airport"):
+        if airport.get("airport_type", "") not in DIVERSION_AIRPORT_TYPES:
             continue
-        d = haversine_nm(mid_lat, mid_lon, airport["latitude"], airport["longitude"])
-        if d < best_dist:
-            best_dist = d
-            best = airport
+        cross, along = cross_and_along_track_nm(
+            dep_lat, dep_lon, dest_lat, dest_lon, airport["latitude"], airport["longitude"]
+        )
+        if cross > max_cross_track_nm or not 0 < along < route_nm:
+            continue
+        found.append(
+            {
+                "airport": airport,
+                "distance_from_route_nm": round(cross, 2),
+                "distance_along_route_nm": round(along, 1),
+            }
+        )
 
-    if not best:
-        return []
-    ct = cross_track_distance_nm(dep_lat, dep_lon, dest_lat, dest_lon, best["latitude"], best["longitude"])
-    return [{"airport": best, "distance_from_route_nm": round(ct, 2)}]
+    return select_spread_diversions(found, route_nm)
 
 
 def find_diversion_airports_postgis(
-    supabase: Any,
+    supabase: Any | None,
     dep_lon: float,
     dep_lat: float,
     dest_lon: float,
@@ -155,31 +171,34 @@ def find_diversion_airports_postgis(
     min_runway_ft: int = 3000,
     fallback_candidates: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:
-    """Query airports within route corridor; widen search and fall back until at least one found."""
+    """Diversion airports along the route: suitable airports abeam of it, closest first, spread over its length.
+
+    Airports within ``DIVERSION_CORRIDOR_NM`` of the route are fetched from PostGIS (``fallback_candidates`` are
+    searched in Python when that fails or finds none). There is no minimum distance from the route and airports
+    behind the departure or beyond the destination are not options; if nothing qualifies the list is empty.
+    """
+    route_nm = haversine_nm(dep_lat, dep_lon, dest_lat, dest_lon)
     diversions: list[dict[str, Any]] = []
 
-    try:
-        for min_nm, max_nm in DIVERSION_SEARCH_TIERS:
+    if supabase is not None:
+        try:
             diversions = _postgis_search(
-                supabase,
-                dep_lon,
-                dep_lat,
-                dest_lon,
-                dest_lat,
-                departure_id,
-                destination_id,
-                min_runway_ft,
-                min_nm,
-                max_nm,
+                supabase, dep_lon, dep_lat, dest_lon, dest_lat, departure_id, destination_id, min_runway_ft
             )
-            if diversions:
-                logger.info("Diversion search found %d at %.0f-%.0f NM", len(diversions), min_nm, max_nm)
-                break
-    except Exception as exc:
-        logger.warning("PostGIS diversion query failed: %s", exc)
-        diversions = []
+        except Exception as exc:
+            logger.warning("PostGIS diversion query failed: %s", exc)
 
-    if not diversions and fallback_candidates:
+    if diversions:
+        add_route_position(diversions, dep_lat, dep_lon, dest_lat, dest_lon)
+        # The PostGIS function only returns airports abeam of the route; checking again keeps the result right while
+        # a database still runs the previous version of the function (before migration 011).
+        diversions = [d for d in diversions if 0 < d["distance_along_route_nm"] < route_nm]
+        if diversions:
+            selected = select_spread_diversions(diversions, route_nm)
+            logger.info("Diversion search found %d airports (%d candidates)", len(selected), len(diversions))
+            return selected
+
+    if fallback_candidates:
         diversions = _python_fallback_search(
             fallback_candidates,
             dep_lat,
@@ -192,19 +211,5 @@ def find_diversion_airports_postgis(
         )
         if diversions:
             logger.info("Diversion python fallback found %d airports", len(diversions))
-
-    if not diversions and fallback_candidates:
-        diversions = _nearest_runway_fallback(
-            fallback_candidates,
-            dep_lat,
-            dep_lon,
-            dest_lat,
-            dest_lon,
-            departure_id,
-            destination_id,
-            min_runway_ft,
-        )
-        if diversions:
-            logger.info("Diversion nearest-runway fallback found %d airports", len(diversions))
 
     return diversions

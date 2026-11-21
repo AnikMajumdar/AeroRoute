@@ -30,13 +30,19 @@ def ensure_aircraft_presets(supabase: Client) -> list[dict]:
             "descent_time_min": preset["descent_time_min"],
             "reserve_fuel_min": preset["reserve_fuel_min"],
             "min_runway_ft": preset["min_runway_ft"],
+            "usable_fuel_gal": preset["usable_fuel_gal"],
             "is_preset": True,
             "user_id": None,
         }
         if preset["name"] in by_name:
-            supabase.table("aircraft_profiles").update(
-                {k: v for k, v in payload.items() if k not in ("name", "is_preset", "user_id")}
-            ).eq("id", by_name[preset["name"]]["id"]).execute()
+            existing = by_name[preset["name"]]
+            changes = {
+                key: value
+                for key, value in payload.items()
+                if key not in ("name", "is_preset", "user_id") and existing.get(key) != value
+            }
+            if changes:
+                supabase.table("aircraft_profiles").update(changes).eq("id", existing["id"]).execute()
         else:
             result = supabase.table("aircraft_profiles").insert(payload).execute()
             if result.data:

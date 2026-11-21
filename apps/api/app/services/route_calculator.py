@@ -18,17 +18,85 @@ from app.services.diversion_postgis import find_diversion_airports_postgis
 from app.services.ml_features import extract_delay_features, extract_ete_features
 from app.services.faa_nas import faa_nas_client
 from app.services.fuel_model import calculate_fuel_breakdown
-from app.services.open_meteo import open_meteo_client
-from app.services.route_scoring import ScoringInput, calculate_normalized_score
+from app.services.open_meteo import open_meteo_client, wind_quality_from_segments
+from app.services.route_scoring import (
+    ScoringInput,
+    calculate_normalized_score,
+    is_known_flight_category,
+    scoring_data_warnings,
+)
 from app.services.weather_checkpoints import (
     best_weather_checkpoint,
     fetch_checkpoint_weather,
     select_checkpoint_airports,
 )
+from app.services.wind_altitude import groundspeed_kt
 
 logger = logging.getLogger(__name__)
 
 OFFSET_NM = 35.0
+
+# The "via diversion" route goes through a diversion airport that is off the direct track by this much: closer
+# airports are on the direct route already and a route through them would only repeat it.
+MIN_VIA_DIVERSION_OFFSET_NM = 15.0
+MAX_VIA_DIVERSION_OFFSET_NM = 75.0
+
+# Average speed while climbing / descending as a fraction of cruise speed (light piston and turboprop typical).
+CLIMB_SPEED_FACTOR = 0.7
+DESCENT_SPEED_FACTOR = 0.9
+# Planning floor for the groundspeed (fraction of cruise speed) so extreme winds cannot produce absurd ETEs.
+MIN_GROUNDSPEED_FRACTION = 0.25
+
+
+@dataclass(frozen=True)
+class FlightPhases:
+    """Climb flown from the start of a route and descent flown up to its end; the rest is cruise."""
+
+    climb_minutes: float
+    descent_minutes: float
+    climb_nm: float
+    descent_nm: float
+
+    def climb_minutes_for(self, nm: float) -> float:
+        return self.climb_minutes * nm / self.climb_nm if self.climb_nm > 0 else 0.0
+
+    def descent_minutes_for(self, nm: float) -> float:
+        return self.descent_minutes * nm / self.descent_nm if self.descent_nm > 0 else 0.0
+
+
+def plan_phases(distance_nm: float, aircraft: dict[str, Any]) -> FlightPhases:
+    """Time and distance of the climb and descent; both shrink proportionally on routes too short to reach cruise."""
+    cruise_speed = float(aircraft["cruise_speed_kt"])
+    climb_min = float(aircraft.get("climb_time_min") or 12)
+    descent_min = float(aircraft.get("descent_time_min") or 8)
+    climb_nm = climb_min / 60.0 * cruise_speed * CLIMB_SPEED_FACTOR
+    descent_nm = descent_min / 60.0 * cruise_speed * DESCENT_SPEED_FACTOR
+    covered = climb_nm + descent_nm
+    scale = min(1.0, distance_nm / covered) if covered > 0 else 1.0
+    return FlightPhases(climb_min * scale, descent_min * scale, climb_nm * scale, descent_nm * scale)
+
+
+def split_leg_distances(
+    leg_distances: list[float], climb_nm: float, descent_nm: float
+) -> list[tuple[float, float, float]]:
+    """(climb, cruise, descent) distance of every leg: the climb is flown first, the descent last."""
+    climb = [0.0] * len(leg_distances)
+    descent = [0.0] * len(leg_distances)
+    remaining = climb_nm
+    for i, dist in enumerate(leg_distances):
+        if remaining <= 0:
+            break
+        climb[i] = min(dist, remaining)
+        remaining -= climb[i]
+    remaining = descent_nm
+    for i in reversed(range(len(leg_distances))):
+        if remaining <= 0:
+            break
+        descent[i] = min(leg_distances[i] - climb[i], remaining)
+        remaining -= descent[i]
+    return [
+        (climb[i], max(0.0, leg_distances[i] - climb[i] - descent[i]), descent[i]) for i in range(len(leg_distances))
+    ]
 
 
 @dataclass
@@ -43,6 +111,7 @@ class RouteVariant:
     score: float
     score_breakdown: dict[str, Any]
     fuel_breakdown: dict[str, Any] = field(default_factory=dict)
+    slow_legs: int = 0  # legs whose groundspeed was raised to the planning floor
 
 
 def _build_route_variants(
@@ -58,13 +127,15 @@ def _build_route_variants(
     mid_dist = haversine_nm(dep_lat, dep_lon, dest_lat, dest_lon) / 2
     mid_lat, mid_lon = destination_point(dep_lat, dep_lon, bearing, mid_dist)
 
-    north_mid = destination_point(mid_lat, mid_lon, (bearing + 270) % 360, OFFSET_NM)
-    south_mid = destination_point(mid_lat, mid_lon, (bearing + 90) % 360, OFFSET_NM)
+    # Offsets are defined relative to the direction of travel; labelling them "north"/"south" was wrong
+    # on westbound routes (and meaningless on north/south routes).
+    left_mid = destination_point(mid_lat, mid_lon, (bearing + 270) % 360, OFFSET_NM)
+    right_mid = destination_point(mid_lat, mid_lon, (bearing + 90) % 360, OFFSET_NM)
 
     variants: list[tuple[str, list[tuple[float, float]]]] = [
         ("direct", direct),
-        ("north_offset", [(dep_lat, dep_lon), north_mid, (dest_lat, dest_lon)]),
-        ("south_offset", [(dep_lat, dep_lon), south_mid, (dest_lat, dest_lon)]),
+        ("left_offset", [(dep_lat, dep_lon), left_mid, (dest_lat, dest_lon)]),
+        ("right_offset", [(dep_lat, dep_lon), right_mid, (dest_lat, dest_lon)]),
     ]
 
     if diversion_airport:
@@ -82,6 +153,111 @@ def _build_route_variants(
     return variants
 
 
+def choose_via_diversion(diversions: list[dict[str, Any]], route_nm: float) -> dict[str, Any] | None:
+    """The airport for the "via diversion" route: a diversion airport off the direct track by 15-75 NM that is
+    nearest to the middle of the route (the closest one to the track on a tie); None if there is none.
+    """
+    options = [
+        d
+        for d in diversions
+        if MIN_VIA_DIVERSION_OFFSET_NM <= d["distance_from_route_nm"] <= MAX_VIA_DIVERSION_OFFSET_NM
+    ]
+    if not options:
+        return None
+    middle = route_nm / 2
+    best = min(
+        options,
+        key=lambda d: (abs(d.get("distance_along_route_nm", middle) - middle), d["distance_from_route_nm"]),
+    )
+    return best["airport"]
+
+
+def wind_quality_warnings(segments: list[dict[str, Any]]) -> list[str]:
+    """Plain-language warnings when a route's winds are missing or degraded.
+
+    Legs without wind data are planned with zero wind, which must never happen silently.
+    """
+    sources = [segment.get("wind_source") for segment in segments]
+    total = len(sources)
+    missing = sum(1 for source in sources if not source)
+    fallback = sources.count("surface_fallback")
+    warnings: list[str] = []
+    if total == 0 or missing == total:
+        warnings.append(
+            "Wind data unavailable — ETE and fuel assume still air (zero wind). "
+            "Check winds aloft before relying on these numbers."
+        )
+        return warnings
+    if missing:
+        warnings.append(
+            f"Wind data unavailable for {missing} of {total} legs — those legs assume zero wind "
+            "(educational estimate only)"
+        )
+    if fallback == total - missing:
+        warnings.append(
+            "Cruise-altitude winds unavailable — using surface wind fallback (educational estimate only)"
+        )
+    elif fallback:
+        warnings.append(
+            f"Cruise-altitude winds unavailable for {fallback} of {total} legs — "
+            "using surface wind for those legs (educational estimate only)"
+        )
+    return warnings
+
+
+def faa_status_known(status: dict[str, Any] | None) -> bool:
+    """True when an FAA NAS status was actually obtained (absent or 'unknown' means it was not)."""
+    return str((status or {}).get("status") or "unknown").lower() != "unknown"
+
+
+def data_gap_warnings(
+    breakdown: dict[str, Any],
+    weather_gaps: list[str],
+    status_gaps: list[str],
+    checkpoints_without_weather: int = 0,
+    checkpoint_count: int = 0,
+) -> list[str]:
+    """Warnings for inputs that are missing although their score component was still calculated from the rest.
+
+    A component with no data at all is reported by ``scoring_data_warnings`` instead.
+    """
+    unavailable = set(breakdown.get("unavailable_components") or [])
+    warnings: list[str] = []
+    if "weather" not in unavailable:
+        if weather_gaps:
+            warnings.append(f"Weather unavailable for {' and '.join(weather_gaps)} — not included in the weather score")
+        if 0 < checkpoints_without_weather < checkpoint_count:
+            warnings.append(
+                f"Weather unavailable for {checkpoints_without_weather} of {checkpoint_count} en-route checkpoints "
+                "— not included in the weather score"
+            )
+    if status_gaps and "delay" not in unavailable:
+        warnings.append(f"FAA status unavailable for {' and '.join(status_gaps)} — not included in the delay score")
+    return warnings
+
+
+def _cruise_minutes(
+    samples: list[dict[str, Any]],
+    cruise_from_nm: float,
+    cruise_to_nm: float,
+    cruise_speed_kt: float,
+    min_groundspeed: float,
+) -> tuple[float, bool]:
+    """Cruise time over the part of a leg between two distances, with the groundspeed of each wind sample."""
+    minutes = 0.0
+    floored = False
+    for sample in samples:
+        overlap = min(sample["end_nm"], cruise_to_nm) - max(sample["start_nm"], cruise_from_nm)
+        if overlap <= 1e-9:
+            continue
+        achievable = groundspeed_kt(
+            cruise_speed_kt, sample["headwind_component_kt"] or 0.0, sample["crosswind_component_kt"] or 0.0
+        )
+        floored = floored or achievable < min_groundspeed
+        minutes += overlap / max(min_groundspeed, achievable) * 60
+    return minutes, floored
+
+
 async def _compute_variant_metrics(
     name: str,
     waypoints: list[tuple[float, float]],
@@ -94,29 +270,56 @@ async def _compute_variant_metrics(
     cruise_speed_kt = int(aircraft["cruise_speed_kt"])
     fuel_burn_gph = float(aircraft["fuel_burn_gph"])
     cruise_altitude_ft = int(aircraft.get("cruise_altitude_ft") or 10000)
-    climb_time = float(aircraft.get("climb_time_min") or 12)
-    descent_time = float(aircraft.get("descent_time_min") or 8)
 
-    total_distance = 0.0
+    leg_distances = [
+        haversine_nm(waypoints[i][0], waypoints[i][1], waypoints[i + 1][0], waypoints[i + 1][1])
+        for i in range(len(waypoints) - 1)
+    ]
+    total_distance = sum(leg_distances)
+    phases = plan_phases(total_distance, aircraft)
+    leg_phases = split_leg_distances(leg_distances, phases.climb_nm, phases.descent_nm)
     cruise_ete = 0.0
+    min_groundspeed = MIN_GROUNDSPEED_FRACTION * cruise_speed_kt
+    slow_legs = 0
     segments: list[dict[str, Any]] = []
 
     wind_segments, wind_quality = await open_meteo_client.sample_route_winds(
-        waypoints, cruise_altitude_ft=cruise_altitude_ft, forecast_time=departure_time
+        waypoints,
+        cruise_altitude_ft=cruise_altitude_ft,
+        forecast_time=departure_time,
+        cruise_speed_kt=cruise_speed_kt,
     )
 
     for i in range(len(waypoints) - 1):
         lat1, lon1 = waypoints[i]
         lat2, lon2 = waypoints[i + 1]
-        leg_dist = haversine_nm(lat1, lon1, lat2, lon2)
+        leg_dist = leg_distances[i]
+        climb_nm, cruise_nm, descent_nm = leg_phases[i]
         bearing = initial_bearing_deg(lat1, lon1, lat2, lon2)
-        total_distance += leg_dist
 
         wind_data = wind_segments[i] if i < len(wind_segments) else {}
         signed_hw = wind_data.get("headwind_component_kt") or 0.0
-        groundspeed = max(60.0, cruise_speed_kt - signed_hw)
-        leg_ete = (leg_dist / groundspeed) * 60 if groundspeed > 0 else 0
-        cruise_ete += leg_ete
+        crosswind = wind_data.get("crosswind_component_kt") or 0.0
+        samples = wind_data.get("samples") or [
+            {
+                "start_nm": 0.0,
+                "end_nm": leg_dist,
+                "headwind_component_kt": signed_hw,
+                "crosswind_component_kt": crosswind,
+            }
+        ]
+        leg_cruise_ete, floored = _cruise_minutes(
+            samples, climb_nm, climb_nm + cruise_nm, cruise_speed_kt, min_groundspeed
+        )
+        if floored:
+            slow_legs += 1
+        cruise_ete += leg_cruise_ete
+        leg_ete = leg_cruise_ete + phases.climb_minutes_for(climb_nm) + phases.descent_minutes_for(descent_nm)
+        groundspeed = (
+            leg_dist / leg_ete * 60
+            if leg_ete > 0
+            else max(min_groundspeed, groundspeed_kt(cruise_speed_kt, signed_hw, crosswind))
+        )
 
         hw_stored = max(0.0, signed_hw) if wind_data.get("wind_speed_kt") is not None else None
         tw_stored = max(0.0, -signed_hw) if wind_data.get("wind_speed_kt") is not None else None
@@ -142,9 +345,12 @@ async def _compute_variant_metrics(
             }
         )
 
-    total_ete = cruise_ete + climb_time + descent_time
+    total_ete = cruise_ete + phases.climb_minutes + phases.descent_minutes
     fuel_breakdown = calculate_fuel_breakdown(
-        aircraft, cruise_ete_minutes=cruise_ete, climb_ete_minutes=climb_time, descent_ete_minutes=descent_time
+        aircraft,
+        cruise_ete_minutes=cruise_ete,
+        climb_ete_minutes=phases.climb_minutes,
+        descent_ete_minutes=phases.descent_minutes,
     )
     fuel_burn = fuel_breakdown.trip_fuel_gal
     fuel_cost = fuel_breakdown.total_required_gal * fuel_price
@@ -162,9 +368,10 @@ async def _compute_variant_metrics(
         destination_ground_stop=scoring_context.get("destination_ground_stop", False),
         departure_flight_category=scoring_context.get("departure_flight_category"),
         destination_flight_category=scoring_context.get("destination_flight_category"),
-        checkpoint_weather_penalty=scoring_context.get("checkpoint_weather_penalty", 0),
+        checkpoint_weather_penalty=scoring_context.get("checkpoint_weather_penalty"),
         diversion_count=scoring_context.get("diversion_count", 5),
         min_diversion_runway_ft=scoring_context.get("min_diversion_runway_ft", 5000),
+        delay_known=scoring_context.get("delay_known", True),
     )
     breakdown = calculate_normalized_score(score_input, preference=route_preference)
 
@@ -179,6 +386,7 @@ async def _compute_variant_metrics(
         score=breakdown["composite_score"],
         score_breakdown=breakdown,
         fuel_breakdown=fuel_breakdown.to_dict(),
+        slow_legs=slow_legs,
     )
 
 
@@ -237,31 +445,33 @@ class RouteCalculatorService:
         dest_status = dest_status or {}
 
         direct_dist = haversine_nm(dep_lat, dep_lon, dest_lat, dest_lon)
-        climb_time = float(aircraft.get("climb_time_min") or 12)
-        descent_time = float(aircraft.get("descent_time_min") or 8)
-        baseline_cruise_ete = (direct_dist / cruise) * 60
-        baseline_ete = baseline_cruise_ete + climb_time + descent_time
-        baseline_fuel = calculate_fuel_breakdown(aircraft, cruise_ete_minutes=baseline_cruise_ete).total_required_gal
+        baseline_phases = plan_phases(direct_dist, aircraft)
+        baseline_cruise_ete = (direct_dist - baseline_phases.climb_nm - baseline_phases.descent_nm) / cruise * 60
+        baseline_ete = baseline_cruise_ete + baseline_phases.climb_minutes + baseline_phases.descent_minutes
+        baseline_fuel = calculate_fuel_breakdown(
+            aircraft,
+            cruise_ete_minutes=baseline_cruise_ete,
+            climb_ete_minutes=baseline_phases.climb_minutes,
+            descent_ete_minutes=baseline_phases.descent_minutes,
+        ).total_required_gal
 
         direct_waypoints = [(dep_lat, dep_lon), (dest_lat, dest_lon)]
 
-        diversion_airports: list[dict[str, Any]] = []
-        if supabase:
-            diversion_airports = find_diversion_airports_postgis(
-                supabase,
-                dep_lon,
-                dep_lat,
-                dest_lon,
-                dest_lat,
-                departure["id"],
-                destination["id"],
-                min_runway_ft=min_runway,
-                fallback_candidates=checkpoint_candidates or [],
-            )
+        diversion_airports = find_diversion_airports_postgis(
+            supabase,
+            dep_lon,
+            dep_lat,
+            dest_lon,
+            dest_lat,
+            departure["id"],
+            destination["id"],
+            min_runway_ft=min_runway,
+            fallback_candidates=checkpoint_candidates or [],
+        )
         if not diversion_airports:
             warnings.append("No suitable diversion airports found — verify alternate airports manually")
 
-        best_diversion = diversion_airports[0]["airport"] if diversion_airports else None
+        best_diversion = choose_via_diversion(diversion_airports, direct_dist)
 
         checkpoints_raw = select_checkpoint_airports(
             direct_waypoints,
@@ -270,9 +480,9 @@ class RouteCalculatorService:
             destination["id"],
         )
         checkpoint_weather = await fetch_checkpoint_weather(checkpoints_raw)
-        checkpoint_penalty = sum(c.get("weather_penalty", 0) for c in checkpoint_weather) / max(
-            len(checkpoint_weather), 1
-        )
+        # Checkpoints without weather are not scored; None (not 0) tells the scorer that none of them has any.
+        known_penalties = [c["weather_penalty"] for c in checkpoint_weather if c.get("weather_penalty") is not None]
+        checkpoint_penalty = sum(known_penalties) / len(known_penalties) if known_penalties else None
         best_wx_cp = best_weather_checkpoint(checkpoint_weather)
 
         scoring_context = {
@@ -287,6 +497,7 @@ class RouteCalculatorService:
             "departure_flight_category": (dep_weather or {}).get("flight_category"),
             "destination_flight_category": (dest_weather or {}).get("flight_category"),
             "checkpoint_weather_penalty": checkpoint_penalty,
+            "delay_known": faa_status_known(dep_status) or faa_status_known(dest_status),
             "diversion_count": len(diversion_airports),
             "min_diversion_runway_ft": min(
                 (d["airport"].get("longest_runway_ft") or 99999 for d in diversion_airports),
@@ -316,23 +527,21 @@ class RouteCalculatorService:
             for vname, waypoints in variant_defs
         ]
         variants = list(await asyncio.gather(*variant_tasks))
-        wind_quality = "unavailable"
-        for variant in variants:
-            if variant.segments:
-                sources = {s.get("wind_source") for s in variant.segments if s.get("wind_source")}
-                if "surface_fallback" in sources:
-                    wind_quality = "mixed" if "pressure_level" in sources else "surface_fallback"
-                elif "pressure_level" in sources:
-                    wind_quality = "pressure_level"
-
-        if wind_quality == "surface_fallback":
-            warnings.append(
-                "Cruise-altitude winds unavailable — using surface wind fallback (educational estimate only)"
-            )
 
         variants.sort(key=lambda v: v.score, reverse=True)
         primary = variants[0]
         alternate = variants[1] if len(variants) > 1 else None
+
+        # The stored quality and the warnings describe the winds of the route that is actually returned.
+        wind_quality = wind_quality_from_segments(primary.segments)
+        warnings.extend(wind_quality_warnings(primary.segments))
+        warnings.extend(primary.fuel_breakdown.get("warnings") or [])
+        if primary.slow_legs:
+            warnings.append(
+                f"Very strong winds on {primary.slow_legs} leg(s): groundspeed was limited to "
+                f"{MIN_GROUNDSPEED_FRACTION:.0%} of cruise speed, so ETE and fuel are unreliable "
+                "(educational estimate only)"
+            )
 
         route_path = [{"lat": lat, "lon": lon} for lat, lon in primary.waypoints]
         checkpoint_icaos = [c.get("icao") for c in checkpoint_weather if c.get("icao")]
@@ -360,6 +569,25 @@ class RouteCalculatorService:
         )
         primary.score = primary.score_breakdown.get("composite_score", primary.score)
         live_flags = live_data_feature_flags(live_snapshot)
+
+        warnings.extend(scoring_data_warnings(primary.score_breakdown))
+        warnings.extend(
+            data_gap_warnings(
+                primary.score_breakdown,
+                weather_gaps=[
+                    f"{role} {icao or '(no ICAO)'}"
+                    for role, icao, weather in (("departure", dep_icao, dep_weather), ("destination", dest_icao, dest_weather))
+                    if not is_known_flight_category((weather or {}).get("flight_category"))
+                ],
+                status_gaps=[
+                    f"{role} {icao or '(no ICAO)'}"
+                    for role, icao, status in (("departure", dep_icao, dep_status), ("destination", dest_icao, dest_status))
+                    if not faa_status_known(status)
+                ],
+                checkpoints_without_weather=len(checkpoint_weather) - len(known_penalties),
+                checkpoint_count=len(checkpoint_weather),
+            )
+        )
 
         candidate_summaries = [
             {
@@ -423,7 +651,7 @@ class RouteCalculatorService:
             "alternate": alternate,
             "variants": variants,
             "candidate_summaries": candidate_summaries,
-            "warnings": warnings,
+            "warnings": list(dict.fromkeys(warnings)),
             "departure_weather": {"metar": dep_weather, "taf": dep_taf, "faa_status": dep_status},
             "destination_weather": {"metar": dest_weather, "taf": dest_taf, "faa_status": dest_status},
             "diversion_airports": diversion_airports,
@@ -441,35 +669,3 @@ class RouteCalculatorService:
 
 
 route_calculator = RouteCalculatorService()
-
-
-# Geometric corridor search retained for unit tests (production uses PostGIS)
-def find_diversion_airports(
-    route_waypoints: list[tuple[float, float]],
-    all_airports: list[dict[str, Any]],
-    departure_id: str,
-    destination_id: str,
-    min_runway_ft: int = 3000,
-) -> list[dict[str, Any]]:
-    from app.geo.utils import cross_track_distance_nm
-
-    candidates: list[dict[str, Any]] = []
-    for airport in all_airports:
-        if airport["id"] in (departure_id, destination_id):
-            continue
-        if airport.get("airport_type") not in ("small_airport", "medium_airport", "large_airport"):
-            continue
-        if (airport.get("longest_runway_ft") or 0) < min_runway_ft:
-            continue
-        apt_lat, apt_lon = airport["latitude"], airport["longitude"]
-        min_ct = float("inf")
-        for i in range(len(route_waypoints) - 1):
-            lat1, lon1 = route_waypoints[i]
-            lat2, lon2 = route_waypoints[i + 1]
-            min_ct = min(min_ct, cross_track_distance_nm(lat1, lon1, lat2, lon2, apt_lat, apt_lon))
-        if 25.0 <= min_ct <= 50.0:
-            candidates.append(
-                {"airport": airport, "distance_from_route_nm": round(min_ct, 2)}
-            )
-    candidates.sort(key=lambda c: c["distance_from_route_nm"])
-    return candidates[:10]

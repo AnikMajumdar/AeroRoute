@@ -13,6 +13,7 @@ class AircraftPresetSpec(TypedDict):
     descent_time_min: float
     reserve_fuel_min: float
     min_runway_ft: int
+    usable_fuel_gal: float
     notes: str
 
 
@@ -27,6 +28,7 @@ AIRCRAFT_PRESETS: list[AircraftPresetSpec] = [
         "descent_time_min": 8,
         "reserve_fuel_min": 45,
         "min_runway_ft": 2500,
+        "usable_fuel_gal": 53.0,
         "notes": "Cessna 172S — educational planning values",
     },
     {
@@ -39,6 +41,7 @@ AIRCRAFT_PRESETS: list[AircraftPresetSpec] = [
         "descent_time_min": 9,
         "reserve_fuel_min": 50,
         "min_runway_ft": 2500,
+        "usable_fuel_gal": 48.0,
         "notes": "Piper PA-28 Archer — educational planning values",
     },
     {
@@ -51,6 +54,7 @@ AIRCRAFT_PRESETS: list[AircraftPresetSpec] = [
         "descent_time_min": 12,
         "reserve_fuel_min": 60,
         "min_runway_ft": 4000,
+        "usable_fuel_gal": 166.0,
         "notes": "Beechcraft Baron G58 — educational planning values",
     },
     {
@@ -63,6 +67,7 @@ AIRCRAFT_PRESETS: list[AircraftPresetSpec] = [
         "descent_time_min": 10,
         "reserve_fuel_min": 55,
         "min_runway_ft": 3000,
+        "usable_fuel_gal": 81.0,
         "notes": "Cirrus SR22 — educational planning values",
     },
     {
@@ -75,6 +80,7 @@ AIRCRAFT_PRESETS: list[AircraftPresetSpec] = [
         "descent_time_min": 15,
         "reserve_fuel_min": 90,
         "min_runway_ft": 5000,
+        "usable_fuel_gal": 539.0,
         "notes": "King Air 350 — educational planning values",
     },
 ]

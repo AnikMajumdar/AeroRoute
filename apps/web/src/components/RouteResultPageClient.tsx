@@ -4,7 +4,7 @@ import { useAuth } from "@clerk/nextjs";
 import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import { PageLayout } from "@/components/Layout";
-import { RouteCopilot } from "@/components/RouteCopilot";
+import { RouteCopilot, CopilotPrefill } from "@/components/RouteCopilot";
 import { RouteMap } from "@/components/RouteMap";
 import { LiveRestrictionsCard } from "@/components/LiveRestrictionsCard";
 import { HazardsCard } from "@/components/HazardsCard";
@@ -14,18 +14,11 @@ import { Badge } from "@/components/ui/Badge";
 import { Button, ButtonLink } from "@/components/ui/Button";
 import { Card, CardHeader } from "@/components/ui/Card";
 import { StatCard } from "@/components/ui/StatCard";
-import { E2E_ROUTE_ID, mockRouteResult } from "@/lib/e2eMockRoute";
-import {
-  RouteResult,
-  api,
-  formatCurrency,
-  formatDuration,
-  scoreColor,
-  windQualityLabel,
-} from "@/lib/api";
+import { RouteResult, api, formatCurrency, formatDuration, scoreColor, windQualityLabel } from "@/lib/api";
 import { readCachedRouteResult } from "@/lib/routeCache";
 
-const IS_E2E = process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true";
+// Local Playwright runs only; both conditions are inlined so production builds drop the fixture chunk entirely.
+const IS_E2E = process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true" && process.env.NODE_ENV !== "production";
 
 export function RouteResultPageClient({ routeId }: { routeId: string }) {
   const { userId, isLoaded, getToken } = useAuth();
@@ -36,6 +29,7 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
   const [route, setRoute] = useState<RouteResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [copilotPrefill, setCopilotPrefill] = useState<CopilotPrefill | null>(null);
 
   const loadRoute = useCallback(async () => {
     if (!activeUserId) return;
@@ -43,10 +37,13 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
     setLoading(true);
     setError("");
 
-    if (IS_E2E && routeId === E2E_ROUTE_ID) {
-      setRoute(mockRouteResult);
-      setLoading(false);
-      return;
+    if (process.env.NEXT_PUBLIC_E2E_TEST_MODE === "true" && process.env.NODE_ENV !== "production") {
+      const { E2E_ROUTE_ID, mockRouteResult } = await import("@/lib/e2eMockRoute");
+      if (routeId === E2E_ROUTE_ID) {
+        setRoute(mockRouteResult);
+        setLoading(false);
+        return;
+      }
     }
 
     const cached = readCachedRouteResult(routeId);
@@ -109,6 +106,7 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
   const dep = route.departure_airport;
   const dest = route.destination_airport;
   const scoreBreakdown = route.normalized_score_breakdown || route.score_breakdown;
+  const unavailableComponents = scoreBreakdown?.unavailable_components ?? [];
   const fuel = route.fuel_breakdown;
   const liveData = route.live_data_snapshot as
     | {
@@ -149,7 +147,7 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
       )}
 
       <div className="mb-6">
-        <LiveDataActions routeId={route.id} userId={activeUserId!} />
+        <LiveDataActions onAskCopilot={(text) => setCopilotPrefill({ text })} />
       </div>
 
       <div className="mb-8 grid gap-8 lg:grid-cols-5">
@@ -222,6 +220,11 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
               {scoreBreakdown.composite_score.toFixed(0)}/100
             </span>
           </p>
+          {unavailableComponents.length > 0 && (
+            <p className="mb-5 text-xs text-amber-200/80" data-testid="score-unavailable-note">
+              No data for {joinNames(unavailableComponents)} — left out of the composite, not counted as good or bad.
+            </p>
+          )}
           <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-5">
             {Object.entries(scoreBreakdown.component_scores).map(([key, value]) => (
               <ScoreBar key={key} label={key} value={value} />
@@ -381,7 +384,8 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
                   <th className="px-2 pb-3 font-medium">Rank</th>
                   <th className="px-2 pb-3 font-medium">ICAO</th>
                   <th className="px-2 pb-3 font-medium">Name</th>
-                  <th className="px-2 pb-3 font-medium">Distance</th>
+                  <th className="px-2 pb-3 font-medium">Off track</th>
+                  <th className="px-2 pb-3 font-medium">Along route</th>
                   <th className="px-2 pb-3 font-medium">Runway</th>
                 </tr>
               </thead>
@@ -397,6 +401,9 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
                     </td>
                     <td className="px-2 py-3">{d.airport.name}</td>
                     <td className="px-2 py-3">{d.distance_from_route_nm.toFixed(1)} NM</td>
+                    <td className="px-2 py-3" title="Distance from the departure to the point of the route abeam of the airport">
+                      {d.distance_along_route_nm != null ? `${Math.round(d.distance_along_route_nm).toLocaleString()} NM` : "—"}
+                    </td>
                     <td className="px-2 py-3">
                       {d.airport.longest_runway_ft
                         ? `${d.airport.longest_runway_ft.toLocaleString()} ft`
@@ -410,7 +417,7 @@ export function RouteResultPageClient({ routeId }: { routeId: string }) {
         </Card>
       )}
 
-      <RouteCopilot routeId={routeId} />
+      <RouteCopilot routeId={routeId} prefill={copilotPrefill} />
 
       <SafetyDisclaimer className="mt-8" />
     </PageLayout>
@@ -454,18 +461,31 @@ function RouteComparisonCard({
   );
 }
 
-function ScoreBar({ label, value }: { label: string; value: number }) {
+function joinNames(names: string[]): string {
+  if (names.length <= 1) return names.join("");
+  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+}
+
+function ScoreBar({ label, value }: { label: string; value: number | null }) {
   return (
     <div>
       <div className="mb-1 flex justify-between text-xs">
         <span className="capitalize text-muted">{label.replace(/_/g, " ")}</span>
-        <span className={scoreColor(value)}>{value.toFixed(0)}</span>
+        {value == null ? (
+          <span className="text-slate-500" title="No data — not part of the composite">
+            n/a
+          </span>
+        ) : (
+          <span className={scoreColor(value)}>{value.toFixed(0)}</span>
+        )}
       </div>
       <div className="h-2 overflow-hidden rounded-full bg-white/5">
-        <div
-          className="h-full rounded-full bg-gradient-to-r from-sky-400 to-cyan-400 transition-all"
-          style={{ width: `${Math.min(100, value)}%` }}
-        />
+        {value != null && (
+          <div
+            className="h-full rounded-full bg-gradient-to-r from-sky-400 to-cyan-400 transition-all"
+            style={{ width: `${Math.min(100, value)}%` }}
+          />
+        )}
       </div>
     </div>
   );

@@ -4,6 +4,7 @@ import logging
 from datetime import datetime, timezone
 from typing import Any
 
+from app.services.aviation_weather import INTEGRATION_DISABLED_MESSAGE
 from app.services.ml_features import extract_delay_features, extract_ete_features
 from app.services.route_loader import load_route_bundle
 
@@ -22,6 +23,30 @@ def _faa_status_from_weather(weather: dict[str, Any] | None) -> dict[str, Any] |
     if not weather or not isinstance(weather, dict):
         return None
     return weather.get("faa_status")
+
+
+def weather_source_label(has_data: bool) -> str:
+    """Honest provenance for the weather stored with a route (there is no live METAR/TAF source)."""
+    if has_data:
+        return "stored METAR/TAF from route calculation time (AviationWeather.gov)"
+    return "no weather data (AviationWeather.gov integration not connected)"
+
+
+def provider_status(snapshot: dict[str, Any] | None, key: str, fallback_name: str) -> dict[str, Any]:
+    """Source label and connection state of a live-data provider as recorded in a stored snapshot."""
+    meta = ((snapshot or {}).get("sources") or {}).get(key) or {}
+    if not meta:
+        return {
+            "source": f"{fallback_name} (no snapshot stored)",
+            "connected": False,
+            "message": f"No {fallback_name} data stored for this route. Verify through official sources.",
+        }
+    connected = bool(meta.get("available")) and not meta.get("error")
+    return {
+        "source": meta.get("source_name") or fallback_name,
+        "connected": connected,
+        "message": None if connected else (meta.get("error") or f"{fallback_name} data unavailable."),
+    }
 
 
 def _load_predictions(supabase: Any, route_id: str) -> dict[str, Any]:
@@ -153,10 +178,15 @@ async def get_route_context(
     dep_status = _faa_status_from_weather(dep_wx)
     dest_status = _faa_status_from_weather(dest_wx)
 
+    # There is no live METAR/TAF source (the AviationWeather.gov integration is disabled), so a refresh can
+    # never succeed: report that honestly instead of stamping the context with a refresh time that never happened.
     weather_refreshed_at = None
+    weather_refresh = {"requested": refresh_weather, "performed": False}
     if refresh_weather:
-        weather_refreshed_at = datetime.now(timezone.utc).isoformat()
-        # Aviation weather integration disabled — no live METAR/TAF refresh.
+        weather_refresh["reason"] = INTEGRATION_DISABLED_MESSAGE
+
+    dep_metar_snap, dep_taf_snap = metar_snapshot(dep_metar), taf_snapshot(dep_taf)
+    dest_metar_snap, dest_taf_snap = metar_snapshot(dest_metar), taf_snapshot(dest_taf)
 
     enriched_request = {
         **request_data,
@@ -173,6 +203,7 @@ async def get_route_context(
             "live_data_fetched_at": live_fetched_at or (live_data_snapshot or {}).get("fetched_at"),
             "context_built_at": datetime.now(timezone.utc).isoformat(),
         },
+        "weather_refresh": weather_refresh,
         "limitations": SAFETY_LIMITATIONS,
         "quick_facts": build_quick_facts(route_payload, request_data, dep, dest, aircraft, diversions),
         "departure": airport_snapshot(dep, "departure"),
@@ -200,16 +231,16 @@ async def get_route_context(
         "score_breakdown": explain_score(route_payload),
         "fuel_breakdown": route_data.get("fuel_breakdown"),
         "departure_weather": {
-            "metar": metar_snapshot(dep_metar),
-            "taf": taf_snapshot(dep_taf),
+            "metar": dep_metar_snap,
+            "taf": dep_taf_snap,
             "faa_status": faa_status_snapshot(dep_status),
-            "source": "aviationweather.gov",
+            "source": weather_source_label(dep_metar_snap["available"] or dep_taf_snap["available"]),
         },
         "destination_weather": {
-            "metar": metar_snapshot(dest_metar),
-            "taf": taf_snapshot(dest_taf),
+            "metar": dest_metar_snap,
+            "taf": dest_taf_snap,
             "faa_status": faa_status_snapshot(dest_status),
-            "source": "aviationweather.gov",
+            "source": weather_source_label(dest_metar_snap["available"] or dest_taf_snap["available"]),
         },
         "weather_checkpoints": checkpoint_snapshots(route_data.get("weather_checkpoints") or []),
         "wind_summary": _wind_summary(segments, route_data.get("wind_data_quality")),

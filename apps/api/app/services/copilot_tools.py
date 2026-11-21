@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from app.services.route_context_bundle import get_route_context
+from app.services.route_context_bundle import get_route_context, provider_status, weather_source_label
 
 
 async def get_route_summary(supabase: Any, route_id: str, user_id: str) -> dict[str, Any]:
@@ -81,9 +81,16 @@ async def get_weather_risk_summary(supabase: Any, route_id: str, user_id: str) -
     if not ctx["destination_weather"]["taf"].get("available"):
         missing.append("destination TAF")
 
+    has_weather = any(
+        wx[kind].get("available")
+        for wx in (ctx["departure_weather"], ctx["destination_weather"])
+        for kind in ("metar", "taf")
+    ) or any(cp["metar"].get("available") for cp in ctx["weather_checkpoints"])
+
     return {
-        "source": "aviationweather.gov + checkpoints",
+        "source": weather_source_label(has_weather),
         "timestamp": ctx["data_source_timestamps"],
+        "weather_refresh": ctx["weather_refresh"],
         "departure_weather": ctx["departure_weather"],
         "destination_weather": ctx["destination_weather"],
         "weather_checkpoints": ctx["weather_checkpoints"],
@@ -109,13 +116,23 @@ async def get_diversion_recommendation(supabase: Any, route_id: str, user_id: st
 
 async def refresh_route_weather(supabase: Any, route_id: str, user_id: str) -> dict[str, Any]:
     ctx = await get_route_context(supabase, route_id, user_id, refresh_weather=True)
+    has_weather = any(
+        wx[kind].get("available")
+        for wx in (ctx["departure_weather"], ctx["destination_weather"])
+        for kind in ("metar", "taf")
+    )
     return {
-        "source": "aviationweather.gov (live refresh)",
+        "source": weather_source_label(has_weather),
+        "refresh_performed": False,
         "timestamp": ctx["data_source_timestamps"],
+        "weather_refresh": ctx["weather_refresh"],
         "departure_weather": ctx["departure_weather"],
         "destination_weather": ctx["destination_weather"],
         "weather_checkpoints": ctx["weather_checkpoints"],
-        "note": "Checkpoint METARs are from route calculation time unless recalculated.",
+        "note": (
+            "No live weather refresh was performed: the AviationWeather.gov integration is not connected. "
+            "Any weather shown is from route calculation time."
+        ),
     }
 
 
@@ -137,8 +154,11 @@ async def get_tfr_summary(supabase: Any, route_id: str, user_id: str) -> dict[st
     from app.services.live_data.live_data_scoring import summarize_live_restrictions
 
     restrictions = summarize_live_restrictions(snap)
+    status = provider_status(snap, "tfr", "FAA TFR")
     return {
-        "source": "FAA TFR (tfr.faa.gov)",
+        "source": status["source"],
+        "connected": status["connected"],
+        "message": status["message"],
         "timestamp": ctx["data_source_timestamps"],
         "fetched_at": snap.get("fetched_at"),
         "intersecting": restrictions["intersecting"],
@@ -154,7 +174,7 @@ async def get_notam_summary(supabase: Any, route_id: str, user_id: str) -> dict[
     connected = (snap.get("restrictions") or {}).get("notam_connected", False)
     notams = (snap.get("restrictions") or {}).get("notams") or []
     return {
-        "source": "NOTAM provider",
+        "source": provider_status(snap, "notam", "NOTAM provider")["source"],
         "timestamp": ctx["data_source_timestamps"],
         "notam_connected": connected,
         "notams": notams,
@@ -172,8 +192,11 @@ async def get_weather_hazard_summary(supabase: Any, route_id: str, user_id: str)
     from app.services.live_data.live_data_scoring import summarize_weather_hazards
 
     hazards = summarize_weather_hazards(snap)
+    status = provider_status(snap, "weather_hazards", "AviationWeather.gov hazards")
     return {
-        "source": "AviationWeather.gov",
+        "source": status["source"],
+        "connected": status["connected"],
+        "message": status["message"],
         "timestamp": ctx["data_source_timestamps"],
         "fetched_at": snap.get("fetched_at"),
         **hazards,

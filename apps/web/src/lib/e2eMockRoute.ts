@@ -62,7 +62,7 @@ export const mockRouteResult: RouteResult = {
   ],
   route_candidates: [
     { name: "direct", distance_nm: 2145, ete_minutes: 702, fuel_burn_gal: 198, score: 82, selected: true },
-    { name: "north_offset", distance_nm: 2182, ete_minutes: 718, fuel_burn_gal: 205, score: 76, selected: true },
+    { name: "left_offset", distance_nm: 2182, ete_minutes: 718, fuel_burn_gal: 205, score: 76, selected: true },
   ],
   wind_data_quality: "pressure_level",
   route_preference: "balanced",
@@ -88,6 +88,7 @@ export const mockRouteResult: RouteResult = {
         longest_runway_ft: 11489,
       },
       distance_from_route_nm: 35.2,
+      distance_along_route_nm: 1612.4,
       rank: 1,
     },
   ],

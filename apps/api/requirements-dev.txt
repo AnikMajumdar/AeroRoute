@@ -1,0 +1,13 @@
+# Development, test and ML-training dependencies (not installed in the Modal image).
+-r requirements.txt
+pytest>=9.0.3,<10
+pytest-asyncio>=1.2,<2
+# ML training / dataset export scripts only
+pandas>=2.2,<3
+pyarrow>=23.0.1
+# `npm run deploy:api`
+modal>=1.0,<2
+# Static checks used in tests / CI
+pglast>=7,<8
+ruff>=0.8
+pip-audit>=2.7

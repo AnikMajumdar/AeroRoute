@@ -35,7 +35,7 @@
 - **Wind-aware performance** — Open-Meteo GFS pressure-level winds at cruise altitude
 - **Fuel model** — climb, cruise, descent, reserve (educational POH-style estimates)
 - **Route scoring** — normalized 0–100 composite with preference modes (balanced, fastest, fuel saver, weather cautious)
-- **Diversion search** — PostGIS corridor query ranked by distance and runway length
+- **Diversion search** — PostGIS query for suitable airports abeam of the route (within 150 NM, none behind the departure or beyond the destination, no minimum distance), closest to the track first and spread over the route's length
 - **ML predictions** — delay risk (logistic regression) and ETE (random forest surrogate)
 - **AeroRoute Copilot** — Gemini-powered, route-scoped RAG with intent routing and tool grounding
 - **Interactive map** — Leaflet map with primary/alternate paths, diversions, checkpoints
@@ -103,10 +103,10 @@ When a user submits **Calculate Route** (`POST /routes/calculate`):
 3. Persist     route_requests row (status: processing)
 4. Generate    Up to 5 route candidates in parallel:
                  • Direct great-circle
-                 • North offset (~35 NM)
-                 • South offset (~35 NM)
-                 • Via best diversion airport (PostGIS corridor)
-                 • Via best-weather en-route checkpoint
+                 • Left offset (~35 NM, left of the direction of travel)
+                 • Right offset (~35 NM, right of the direction of travel)
+                 • Via a diversion airport 15-75 NM off the track, nearest the middle of the route
+                 • Via best-weather en-route checkpoint (only when a checkpoint has known weather)
 5. Winds       Open-Meteo GFS per segment at cruise pressure level (or surface fallback)
 6. Performance ETE, fuel (climb + cruise + descent + reserve), cost
 7. Score       Weighted 0–100 composite (time, fuel, weather, delay, diversion)
@@ -116,7 +116,7 @@ When a user submits **Calculate Route** (`POST /routes/calculate`):
 11. Return     Full route result → frontend navigates to /routes/{id}
 ```
 
-**Wind model:** Cruise altitude maps to the nearest GFS pressure level (1000–200 hPa). Segment winds are sampled at leg midpoints. Groundspeed = cruise speed − headwind + tailwind.
+**Wind model:** The wind at cruise altitude is interpolated between the two GFS pressure levels (1000–200 hPa, standard-atmosphere altitudes) that enclose it — e.g. 8,500 ft blends 850 hPa (5,000 ft) and 700 hPa (10,000 ft) 30/70 — by interpolating the east/north wind components, so a veering wind stays correct; altitudes outside the table use the end level. Every leg is cut into parts of at most 200 NM and the wind is sampled at the great-circle midpoint of each part, for the forecast hour in which the aircraft is expected there (coordinates are snapped to the 0.25° forecast grid and the raw per-level winds are cached, so a long route costs roughly one Open-Meteo request per 200 NM and candidate, shared by aircraft at different altitudes). Groundspeed of a part = √(TAS² − crosswind²) − headwind; the climb and descent are flown in still air.
 
 **Fuel model (educational):**
 
@@ -125,6 +125,8 @@ trip_fuel   = climb + cruise + descent
 reserve     = (reserve_fuel_min / 60) × fuel_burn_gph
 total       = trip_fuel + reserve
 ```
+
+If the aircraft profile has a `usable_fuel_gal` capacity (all presets do; custom aircraft may set it), `total` is checked against it: a flight that does not fit is reported as **Not feasible non-stop** with the still-air range. Aircraft without a capacity are not checked and the result says so.
 
 **Scoring components (0–100, higher is better):**
 
@@ -135,6 +137,8 @@ total       = trip_fuel + reserve
 | Weather | Dep/dest category + checkpoint penalties |
 | Delay | Rules-based delay signals |
 | Diversion | Corridor airport availability and runway length |
+
+**Missing data is not scored as good conditions.** A component with no data at all — Weather without any METAR flight category, Delay without an FAA status (both are the case while those providers are disconnected, as in the current build) — is returned as `null` (shown as *n/a*), left out of the composite and listed in `unavailable_components`; the remaining weights are renormalised (`effective_weights`) and a warning names what the score is based on. Airports or checkpoints that lack data while the component is still scored from the rest are named in a warning and contribute nothing. Live hazard penalties (SIGMET, TFR, NOTAM) apply to the no-penalty score of 100, so a known adverse signal is never discarded.
 
 ### ML pipeline
 
@@ -182,7 +186,7 @@ AeroRoute/
 ├── data/
 │   ├── raw/                    # OurAirports CSV (~85K airports)
 │   └── ml/                     # Exported Parquet training data
-└── supabase/migrations/        # 001–008 SQL migrations
+└── supabase/migrations/        # 001–010 SQL migrations
 ```
 
 ---
@@ -190,7 +194,7 @@ AeroRoute/
 ## Prerequisites
 
 - **Node.js** 20+
-- **Python** 3.11+ (3.9+ works for local dev; Modal uses 3.11)
+- **Python** 3.11 (see `.python-version`). Modal runs 3.11 and installs the hashed `apps/api/requirements.lock`; Python 3.9 is end-of-life and no longer supported
 - **Supabase** project with PostGIS enabled
 - **Clerk** application ([clerk.com](https://clerk.com))
 - **Google AI Studio** API key (optional, for copilot)
@@ -205,7 +209,13 @@ AeroRoute/
 git clone https://github.com/AnikMajumdar/AeroRoute.git
 cd AeroRoute
 npm install
-npm run setup:api    # creates apps/api/.venv and installs Python deps
+npm run setup:api    # creates apps/api/.venv (Python 3.11) and installs apps/api/requirements-dev.txt
+```
+
+Runtime dependencies live in `apps/api/requirements.txt`; test, ML-training and tooling packages live in `apps/api/requirements-dev.txt`. After changing runtime dependencies, regenerate the production lock file:
+
+```bash
+uv pip compile apps/api/requirements.txt --python-version 3.11 --universal --generate-hashes -o apps/api/requirements.lock
 ```
 
 ### 2. Configure environment
@@ -219,7 +229,7 @@ Fill in Supabase and Clerk keys (see [Environment Variables](#environment-variab
 
 ### 3. Apply migrations and import airports
 
-In the Supabase SQL editor, run migrations **001 through 008** in order (`supabase/migrations/`).
+In the Supabase SQL editor, run migrations **001 through 010** in order (`supabase/migrations/`).
 
 Then import airport data:
 
@@ -263,10 +273,12 @@ Open [http://localhost:3000](http://localhost:3000), sign in, and plan a route a
 |----------|----------|-------------|
 | `SUPABASE_URL` | **Yes** | Supabase project URL |
 | `SUPABASE_SERVICE_ROLE_KEY` | **Yes** | Service role key (backend only — never expose to frontend) |
-| `CLERK_SECRET_KEY` | **Yes** | Clerk secret key |
-| `CLERK_JWKS_URL` | Prod | Clerk JWKS URL for JWT validation |
-| `CLERK_ISSUER` | Prod | Clerk issuer URL |
+| `CLERK_JWKS_URL` | **Yes** (or `CLERK_PUBLISHABLE_KEY`) | Clerk JWKS URL; without it the API rejects authenticated requests with 503 |
+| `CLERK_PUBLISHABLE_KEY` | Alternative | Same value as the web app's publishable key; the JWKS URL is derived from it |
+| `CLERK_ISSUER` | No | When set, the token `iss` claim must match exactly (no trailing slash) |
+| `ALLOW_DEV_AUTH_HEADER` | No | Local development only: trust `X-User-Id` when no JWKS is available (ignored in production) |
 | `API_CORS_ORIGINS` | Prod | Comma-separated origins, e.g. `http://localhost:3000,https://your-app.vercel.app` |
+| `API_CORS_ORIGIN_REGEX` | No | Optional regex for extra origins (e.g. this project's Vercel preview URLs). No wildcard such as `*.vercel.app` is allowed by default |
 | `APP_ENV` | No | `development` or `production` |
 | `COPILOT_ENABLED` | Copilot | `true` to enable |
 | `GEMINI_API_KEY` | Copilot | Google AI Studio key |
@@ -296,16 +308,19 @@ Apply in order via Supabase SQL editor:
 | `001_initial_schema.sql` | Core tables: airports, aircraft, routes, segments, diversions |
 | `002_update_aircraft_presets.sql` | Aircraft performance fields |
 | `003_phase2_accuracy.sql` | Wind altitude columns on segments |
-| `004_rls_policies.sql` | Row-level security |
+| `004_rls_policies.sql` | Row-level security for route requests, results and briefs |
 | `005_faa_status_on_results.sql` | FAA status on results |
 | `006_ml_pipeline.sql` | ML training samples and predictions |
 | `007_fix_diversion_postgis.sql` | PostGIS diversion corridor fix |
 | `008_live_data.sql` | Live data snapshots (TFR/NOTAM/hazard storage) |
+| `009_rls_all_tables.sql` | Row-level security on every remaining table (airports, aircraft profiles, segments, diversions, caches, ML tables) |
+| `010_aircraft_presets_usable_fuel.sql` | Usable fuel capacity (range check) and the canonical preset aircraft values |
+| `011_diversion_airports_abeam.sql` | Diversion search returns only airports abeam of the route |
 
 **Key tables:**
 
-- `airports` — coordinates, PostGIS `geom`, runway length
-- `aircraft_profiles` — cruise speed, fuel burn, altitude, climb/descent/reserve
+- `airports` — coordinates, PostGIS `geom`, length of the longest **open, paved** runway (closed runways, water lanes and turf/gravel/dirt strips are ignored by the importer; airports without such a runway store `NULL`)
+- `aircraft_profiles` — cruise speed, fuel burn, usable fuel, altitude, climb/descent/reserve
 - `route_requests` / `route_results` — user routes, metrics, paths, scores
 - `route_segments` — per-leg winds, groundspeed, ETE
 - `diversion_airports` — corridor search results
@@ -443,7 +458,7 @@ Note the deployed URL (e.g. `https://user--aeroroute-api-fastapi-app.modal.run`)
 
 ### Production checklist
 
-- [ ] Supabase migrations 001–008 applied
+- [ ] Supabase migrations 001–010 applied
 - [ ] Airports imported (`npm run import:airports`)
 - [ ] Modal secret configured and API deployed
 - [ ] Vercel env vars set (especially `NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY`)
@@ -455,8 +470,8 @@ Note the deployed URL (e.g. `https://user--aeroroute-api-fastapi-app.modal.run`)
 
 ## Security
 
-- **Clerk JWT** validated via `CLERK_JWKS_URL` in production; `X-User-Id` header accepted in dev only
-- **Supabase RLS** on user-owned data; API uses service role
+- **Clerk JWT** verified against the instance JWKS (RS256, `exp`, `sub`, optional issuer). Without a JWKS the API fails closed (503); the `X-User-Id` header is honoured only with `ALLOW_DEV_AUTH_HEADER=true` outside production
+- **Supabase RLS** enabled on every table (migrations 004, 008, 009): users see only their own aircraft and route data, reference data is read-only, caches and ML tables are service-role only. The API uses the service role, which bypasses RLS, and enforces ownership in application code
 - **Rate limiting** on `POST /routes/calculate` — 10 requests/min per user (in-memory; use Redis for multi-instance)
 - **Secrets** — never commit `.env` files; never expose service role key or Gemini key in the frontend bundle
 - **Copilot guardrails** — system prompt forbids inventing NOTAMs, weather, or operational approval language

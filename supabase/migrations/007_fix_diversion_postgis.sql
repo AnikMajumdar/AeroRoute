@@ -1,4 +1,4 @@
-"""PostGIS fix: ST_MakeLine requires geometry arguments, not geography."""
+-- PostGIS fix: ST_MakeLine requires geometry arguments, not geography.
 
 CREATE OR REPLACE FUNCTION find_diversion_airports_in_corridor(
     dep_lon DOUBLE PRECISION,
