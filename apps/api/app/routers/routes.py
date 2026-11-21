@@ -270,14 +270,30 @@ async def list_routes(user_id: str = Depends(get_current_user_id)) -> list[Route
         .execute()
     )
 
+    request_rows = requests.data or []
+    if not request_rows:
+        return []
+
+    request_ids = [req["id"] for req in request_rows]
+    airport_ids = list(
+        {req[key] for req in request_rows for key in ("departure_airport_id", "destination_airport_id") if req.get(key)}
+    )
+    results_by_request: dict[str, dict[str, Any]] = {}
+    for row in supabase.table("route_results").select("*").in_("route_request_id", request_ids).execute().data or []:
+        results_by_request.setdefault(row["route_request_id"], row)
+    airports_by_id = {
+        row["id"]: row
+        for row in supabase.table("airports").select("*").in_("id", airport_ids).execute().data or []
+    }
+
     items: list[RouteListItem] = []
-    for req in requests.data or []:
-        result = fetch_one(supabase.table("route_results").select("*").eq("route_request_id", req["id"]))
+    for req in request_rows:
+        result = results_by_request.get(req["id"])
         if not result:
             continue
 
-        dep = fetch_one(supabase.table("airports").select("*").eq("id", req["departure_airport_id"]))
-        dest = fetch_one(supabase.table("airports").select("*").eq("id", req["destination_airport_id"]))
+        dep = airports_by_id.get(req["departure_airport_id"])
+        dest = airports_by_id.get(req["destination_airport_id"])
         if not dep or not dest:
             logger.warning("Skipping route %s in listing: airport row missing", result["id"])
             continue
