@@ -122,6 +122,7 @@ def _build_route_result_detail(
     diversion_details: list[dict[str, Any]],
     created_at: str | None,
     route_preference: str,
+    fuel_price_usd_per_gal: float,
 ) -> RouteResultDetail:
     primary = calc_result["primary"]
     alternate = calc_result.get("alternate")
@@ -149,6 +150,7 @@ def _build_route_result_detail(
         route_candidates=calc_result.get("candidate_summaries") or [],
         wind_data_quality=calc_result.get("wind_data_quality"),
         route_preference=route_preference,
+        fuel_price_usd_per_gal=fuel_price_usd_per_gal,
         warnings=calc_result["warnings"],
         departure_weather=calc_result["departure_weather"],
         destination_weather=calc_result["destination_weather"],
@@ -559,6 +561,7 @@ async def calculate_route(
             diversion_details,
             result_row.data[0]["created_at"],
             body.route_preference,
+            body.fuel_price_usd_per_gal,
         )
 
     except HTTPException as exc:

@@ -11,10 +11,8 @@ import pytest
 
 from app.routers import routes as routes_module
 from app.schemas import RouteCalculateRequest
-from app.services import route_calculator as calculator_module
-from app.services.open_meteo import wind_quality_from_segments
 from app.services.request_status import STALE_MESSAGE, expire_stale_requests, mark_request_failed
-from tests.fakes import make_aircraft, make_airport, seed_route
+from tests.fakes import calculation_env, seed_route
 
 REFERENCE_DETAIL = re.compile(r"Route calculation failed \(reference ([0-9a-f]{8})\)")
 
@@ -50,44 +48,7 @@ def _empty_result(_query):
 
 @pytest.fixture
 def env(api, monkeypatch):
-    """Two eligible airports, a preset aircraft and the real calculator with a faked wind service."""
-    departure = make_airport("KJFK")
-    destination = make_airport("KLAX", latitude=33.9425, longitude=-118.4081)
-    aircraft = make_aircraft()
-    api.db.tables["airports"] = [departure, destination]
-    api.db.tables["aircraft_profiles"] = [aircraft]
-
-    async def winds(waypoints, cruise_altitude_ft=10000, forecast_time=None):
-        segments = [
-            {
-                "segment_index": i,
-                "wind_speed_kt": 0.0,
-                "wind_direction_deg": 270.0,
-                "headwind_component_kt": 0.0,
-                "tailwind_component_kt": 0.0,
-                "wind_altitude_ft": 8500,
-                "wind_pressure_level_hpa": 700,
-                "wind_source": "pressure_level",
-            }
-            for i in range(len(waypoints) - 1)
-        ]
-        return segments, wind_quality_from_segments(segments)
-
-    monkeypatch.setattr(calculator_module.open_meteo_client, "sample_route_winds", winds)
-
-    payload = {
-        "departure_airport_id": departure["id"],
-        "destination_airport_id": destination["id"],
-        "aircraft_profile_id": aircraft["id"],
-        "departure_time": (datetime.now(timezone.utc) + timedelta(hours=2)).isoformat(),
-        "fuel_price_usd_per_gal": 6.5,
-    }
-    return SimpleNamespace(
-        db=api.db,
-        payload=payload,
-        client=api.client,
-        post=lambda: api.client.post("/routes/calculate", json=payload),
-    )
+    return calculation_env(api, monkeypatch)
 
 
 class TestSuccessfulCalculation:
