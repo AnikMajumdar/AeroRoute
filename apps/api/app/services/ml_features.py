@@ -78,10 +78,11 @@ def _metar_from_weather(weather: dict[str, Any] | None) -> dict[str, Any]:
 
 
 def _score_component(score_breakdown: dict[str, Any] | None, key: str) -> float:
+    """Component score for the ML features; neutral 50 when absent or unavailable (stored as null)."""
     if not score_breakdown:
         return 50.0
-    components = score_breakdown.get("component_scores") or {}
-    return float(components.get(key, 50))
+    value = (score_breakdown.get("component_scores") or {}).get(key)
+    return 50.0 if value is None else float(value)
 
 
 def _segment_wind_stats(segments: list[dict[str, Any]]) -> dict[str, float]:

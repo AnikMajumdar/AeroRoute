@@ -119,8 +119,11 @@ class FuelBreakdownDetail(BaseModel):
 class NormalizedScoreBreakdown(BaseModel):
     preference: str
     composite_score: float
-    component_scores: dict[str, float]
+    # None: no data for that component; it is left out of the composite (see unavailable_components)
+    component_scores: dict[str, float | None]
     weights: dict[str, float]
+    effective_weights: dict[str, float] | None = None
+    unavailable_components: list[str] = []
     legacy: dict[str, float] | None = None
     total: float | None = None
 
