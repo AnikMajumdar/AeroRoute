@@ -82,6 +82,19 @@ class TestListRoutes:
         assert response.status_code == 200
         assert [item["id"] for item in response.json()] == [own["result_id"]]
 
+    def test_listing_queries_do_not_grow_with_the_number_of_routes(self, api):
+        seed_route(api.db, user_id="user_A")
+        seed_route(api.db, user_id="user_A")
+        seed_route(api.db, user_id="user_A")
+        api.db.ops.clear()
+
+        response = api.client.get("/routes")
+
+        assert response.status_code == 200
+        assert len(response.json()) == 3
+        assert api.db.ops.count(("airports", "select")) == 1
+        assert api.db.ops.count(("route_results", "select")) == 1
+
 
 class TestCalculateRouteLookups:
     def _body(self, **overrides):
