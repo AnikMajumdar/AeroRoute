@@ -87,11 +87,6 @@ def _load_ml_predictions(supabase: Any, route_id: str) -> tuple[dict[str, Any] |
     return delay_pred, ete_pred
 
 
-def _load_delay_prediction(supabase: Any, route_id: str) -> dict[str, Any] | None:
-    delay, _ = _load_ml_predictions(supabase, route_id)
-    return delay
-
-
 def _faa_status_from_weather(weather: dict[str, Any] | None) -> dict[str, Any] | None:
     if not weather or not isinstance(weather, dict):
         return None
@@ -104,12 +99,6 @@ async def _load_route_bundle(
     bundle = await load_route_bundle(supabase, route_id, user_id)
     route_data, request_data, dep, dest, aircraft, segments, diversions, _alt = bundle
     return route_data, request_data, dep, dest, aircraft, segments, diversions
-
-
-async def _load_route_bundle_full(
-    supabase: Any, route_id: str, user_id: str
-):
-    return await load_route_bundle(supabase, route_id, user_id)
 
 
 def _build_route_result_detail(
@@ -664,23 +653,8 @@ async def get_route(
     )
 
 
-def _load_live_snapshot(supabase: Any, route_id: str) -> dict[str, Any] | None:
-    row = (
-        supabase.table("live_data_snapshots")
-        .select("snapshot")
-        .eq("route_result_id", route_id)
-        .order("fetched_at", desc=True)
-        .limit(1)
-        .execute()
-    )
-    if row.data:
-        return row.data[0].get("snapshot")
-    return None
-
-
 @router.post(
-    "/routes/{route_id}/live-data/refresh",
-    dependencies=[Depends(rate_limited(live_data_refresh_limiter))],
+    "/routes/{route_id}/live-data/refresh",    dependencies=[Depends(rate_limited(live_data_refresh_limiter))],
 )
 async def refresh_live_data(
     route_id: RouteId,
