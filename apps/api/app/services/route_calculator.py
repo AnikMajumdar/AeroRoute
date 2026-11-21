@@ -176,6 +176,28 @@ def wind_quality_warnings(segments: list[dict[str, Any]]) -> list[str]:
     return warnings
 
 
+def _cruise_minutes(
+    samples: list[dict[str, Any]],
+    cruise_from_nm: float,
+    cruise_to_nm: float,
+    cruise_speed_kt: float,
+    min_groundspeed: float,
+) -> tuple[float, bool]:
+    """Cruise time over the part of a leg between two distances, with the groundspeed of each wind sample."""
+    minutes = 0.0
+    floored = False
+    for sample in samples:
+        overlap = min(sample["end_nm"], cruise_to_nm) - max(sample["start_nm"], cruise_from_nm)
+        if overlap <= 1e-9:
+            continue
+        achievable = groundspeed_kt(
+            cruise_speed_kt, sample["headwind_component_kt"] or 0.0, sample["crosswind_component_kt"] or 0.0
+        )
+        floored = floored or achievable < min_groundspeed
+        minutes += overlap / max(min_groundspeed, achievable) * 60
+    return minutes, floored
+
+
 async def _compute_variant_metrics(
     name: str,
     waypoints: list[tuple[float, float]],
@@ -202,7 +224,10 @@ async def _compute_variant_metrics(
     segments: list[dict[str, Any]] = []
 
     wind_segments, wind_quality = await open_meteo_client.sample_route_winds(
-        waypoints, cruise_altitude_ft=cruise_altitude_ft, forecast_time=departure_time
+        waypoints,
+        cruise_altitude_ft=cruise_altitude_ft,
+        forecast_time=departure_time,
+        cruise_speed_kt=cruise_speed_kt,
     )
 
     for i in range(len(waypoints) - 1):
@@ -215,14 +240,26 @@ async def _compute_variant_metrics(
         wind_data = wind_segments[i] if i < len(wind_segments) else {}
         signed_hw = wind_data.get("headwind_component_kt") or 0.0
         crosswind = wind_data.get("crosswind_component_kt") or 0.0
-        achievable_groundspeed = groundspeed_kt(cruise_speed_kt, signed_hw, crosswind)
-        cruise_groundspeed = max(min_groundspeed, achievable_groundspeed)
-        if cruise_nm > 0 and achievable_groundspeed < min_groundspeed:
+        samples = wind_data.get("samples") or [
+            {
+                "start_nm": 0.0,
+                "end_nm": leg_dist,
+                "headwind_component_kt": signed_hw,
+                "crosswind_component_kt": crosswind,
+            }
+        ]
+        leg_cruise_ete, floored = _cruise_minutes(
+            samples, climb_nm, climb_nm + cruise_nm, cruise_speed_kt, min_groundspeed
+        )
+        if floored:
             slow_legs += 1
-        leg_cruise_ete = (cruise_nm / cruise_groundspeed) * 60
         cruise_ete += leg_cruise_ete
         leg_ete = leg_cruise_ete + phases.climb_minutes_for(climb_nm) + phases.descent_minutes_for(descent_nm)
-        groundspeed = leg_dist / leg_ete * 60 if leg_ete > 0 else cruise_groundspeed
+        groundspeed = (
+            leg_dist / leg_ete * 60
+            if leg_ete > 0
+            else max(min_groundspeed, groundspeed_kt(cruise_speed_kt, signed_hw, crosswind))
+        )
 
         hw_stored = max(0.0, signed_hw) if wind_data.get("wind_speed_kt") is not None else None
         tw_stored = max(0.0, -signed_hw) if wind_data.get("wind_speed_kt") is not None else None

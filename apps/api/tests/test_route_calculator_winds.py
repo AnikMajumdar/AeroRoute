@@ -66,7 +66,7 @@ class TestWindQualityWarnings:
 
 
 def _fake_winds(source: str | None):
-    async def sample(waypoints, cruise_altitude_ft=10000, forecast_time=None):
+    async def sample(waypoints, cruise_altitude_ft=10000, forecast_time=None, **_kwargs):
         segments = []
         for i in range(len(waypoints) - 1):
             has_wind = source is not None

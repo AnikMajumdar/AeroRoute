@@ -167,7 +167,7 @@ class TestWarningsAreNotRepeated:
         assert warnings == [AWC_MSG, FAA_MSG, "NOTAM integration not connected."]
 
     async def test_calculated_route_has_no_duplicate_warnings(self, monkeypatch):
-        async def pressure_winds(waypoints, cruise_altitude_ft=10000, forecast_time=None):
+        async def pressure_winds(waypoints, cruise_altitude_ft=10000, forecast_time=None, **_kwargs):
             segments = [
                 {"segment_index": i, "wind_speed_kt": 0.0, "wind_direction_deg": 270.0, "headwind_component_kt": 0.0,
                  "tailwind_component_kt": 0.0, "wind_altitude_ft": 8500, "wind_pressure_level_hpa": 700,
