@@ -256,6 +256,7 @@ async def create_aircraft(
                 "name": body.name,
                 "cruise_speed_kt": body.cruise_speed_kt,
                 "fuel_burn_gph": body.fuel_burn_gph,
+                "usable_fuel_gal": body.usable_fuel_gal,
                 "is_preset": False,
                 "user_id": user_id,
             }

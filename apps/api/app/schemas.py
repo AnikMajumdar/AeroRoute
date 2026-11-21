@@ -36,6 +36,7 @@ class AircraftProfile(BaseModel):
     descent_time_min: float | None = None
     reserve_fuel_min: float | None = None
     min_runway_ft: int | None = None
+    usable_fuel_gal: float | None = None
     is_preset: bool = False
     user_id: str | None = None
 
@@ -44,6 +45,7 @@ class AircraftCreate(BaseModel):
     name: str = Field(min_length=1, max_length=100)
     cruise_speed_kt: int = Field(gt=0, le=600)
     fuel_burn_gph: float = Field(gt=0, le=500)
+    usable_fuel_gal: float | None = Field(default=None, gt=0, le=2000)
 
 
 class RouteCalculateRequest(BaseModel):
@@ -109,6 +111,8 @@ class FuelBreakdownDetail(BaseModel):
     usable_capacity_gal: float | None = None
     fuel_remaining_gal: float | None = None
     fuel_margin_gal: float | None = None
+    feasible: bool | None = None
+    still_air_range_nm: float | None = None
     warnings: list[str] = []
 
 
